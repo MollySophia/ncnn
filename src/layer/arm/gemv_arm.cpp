@@ -100,20 +100,23 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
             }
 
             float32x4_t _b0;
+            float32x4_t _b1;
+            float32x4_t _b2;
+            float32x4_t _b3;
 
 #define GEMV_KERNEL4x4(a_register_idx)                            \
     _b0 = vld1q_f32(b_ptr);                                       \
+    b_ptr += 4;                                                   \
+    _b1 = vld1q_f32(b_ptr);                                       \
+    b_ptr += 4;                                                   \
+    _b2 = vld1q_f32(b_ptr);                                       \
+    b_ptr += 4;                                                   \
+    _b3 = vld1q_f32(b_ptr);                                       \
+    b_ptr += 4;                                                   \
     output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 0); \
-    b_ptr += 4;                                                   \
-    _b0 = vld1q_f32(b_ptr);                                       \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 1); \
-    b_ptr += 4;                                                   \
-    _b0 = vld1q_f32(b_ptr);                                       \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 2); \
-    b_ptr += 4;                                                   \
-    _b0 = vld1q_f32(b_ptr);                                       \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 3); \
-    b_ptr += 4;
+    output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx, 1); \
+    output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx, 2); \
+    output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx, 3);
 
             // 64x4
             GEMV_KERNEL4x4(0);
