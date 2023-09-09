@@ -43,4 +43,3 @@ public:
 } // namespace ncnn
 
 #endif // LAYER_GEMV_H
-

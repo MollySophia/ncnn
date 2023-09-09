@@ -71,4 +71,3 @@ int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_bl
 }
 
 } // namespace ncnn
-
