@@ -30,6 +30,8 @@ public:
 
 public:
     Mat BT_data;
+    Mat scales;
+    Mat zero_points;
     static const int KT = 16 * 4;
 };
 

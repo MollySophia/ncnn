@@ -14,6 +14,7 @@
 
 #include "gemv_arm.h"
 
+#include <array>
 #include <assert.h>
 #include <arm_neon.h>
 #include <iostream>
@@ -24,12 +25,16 @@ int Gemv_arm::create_pipeline(const Option& opt)
 {
     assert(K % KT == 0);
     assert(N % 4 == 0);
-    BT_data.create(K * N, B_data.elemsize);
-    if (BT_data.empty())
+    BT_data.create(K * N, 1u, opt.workspace_allocator);
+    scales.create(KT * 4, 4u, opt.workspace_allocator);
+    zero_points.create(KT * 4, 4u, opt.workspace_allocator);
+
+    if (BT_data.empty() || scales.empty() || zero_points.empty())
         return -100;
 
     const float* ptr0 = B_data;
-    float* ptr = BT_data;
+    uint8_t* ptr = BT_data;
+    int block_id = 0;
 
     // (K, N)
     // (K / 64, N / 4, 64, 4)
@@ -37,14 +42,60 @@ int Gemv_arm::create_pipeline(const Option& opt)
     {
         for (int b = 0; b < N / 4; b++)
         {
+            std::array<float, KT * 4> tmp;
+            int index = 0;
             for (int c = 0; c < KT; c++)
             {
                 for (int d = 0; d < 4; d++)
                 {
                     int k = a * KT + c;
                     int n = b * 4 + d;
-                    *ptr++ = ptr0[k * N + n];
+                    tmp[index++] = ptr0[k * N + n];
                 }
+            }
+            // calculate scale and zero point
+            // float[i] = int[i] * scale + zero_point
+            // int[i] = (float[i] - zero_point) / scale
+            // scale = (max - min) / 255
+            float scale;
+            float zero_point;
+            float max = tmp[0];
+            float min = tmp[0];
+            // std::cout << "tmp[0]=" << tmp[0] << std::endl;
+            for (int i = 1; i < KT * 4; i++)
+            {
+                // std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
+                if (tmp[i] > max)
+                {
+                    max = tmp[i];
+                }
+                if (tmp[i] < min)
+                {
+                    min = tmp[i];
+                }
+            }
+            std::cout << "max = " << max << std::endl;
+            std::cout << "min = " << min << std::endl;
+            if (max == min)
+            {
+                scale = 1.f;
+            }
+            else
+            {
+                scale = (max - min) / 255.f;
+            }
+            zero_point = min;
+            scales[block_id] = scale;
+            zero_points[block_id] = zero_point;
+            std::cout << "scales[" << block_id << "] = " << scale << std::endl;
+            std::cout << "zero_points[" << block_id << "] = " << zero_point << std::endl;
+            block_id++;
+
+            for (int i = 0; i < KT * 4; i++)
+            {
+                tmp[i] = (tmp[i] - zero_point) / scale;
+                assert(tmp[i] >= 0 && tmp[i] <= 255);
+                *ptr++ = static_cast<int>(tmp[i]);
             }
         }
     }
@@ -70,7 +121,8 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
 
     // A and B_data will both only be read once
     const float* a_ptr = A;
-    const float* b_ptr = BT_data;
+    const uint8_t* b_ptr = BT_data;
+    int block_id = 0;
     for (int k = 0; k < K; k += KT, a_ptr += KT)
     {
         float32x4_t _a0 = vld1q_f32(a_ptr);
@@ -90,14 +142,24 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-        for (int i = 0; i < N; i += 4)
+        for (int i = 0; i < N; i += 4, block_id++)
         {
+            // 64x4
+
+            const float32x4_t scale = vdupq_n_f32(scales[block_id]);
+            const float32x4_t zero_point = vdupq_n_f32(zero_points[block_id]);
+
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output = vld1q_f32(output_ptr);
+
             if (k == 0)
             {
                 output = vdupq_n_f32(0.f);
             }
+
+            uint8x16_t tmp;
+            uint16x8_t tmp_low;
+            uint16x8_t tmp_high;
 
             float32x4_t _b0;
             float32x4_t _b1;
@@ -105,14 +167,18 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
             float32x4_t _b3;
 
 #define GEMV_KERNEL4x4(a_register_idx)                            \
-    _b0 = vld1q_f32(b_ptr);                                       \
-    b_ptr += 4;                                                   \
-    _b1 = vld1q_f32(b_ptr);                                       \
-    b_ptr += 4;                                                   \
-    _b2 = vld1q_f32(b_ptr);                                       \
-    b_ptr += 4;                                                   \
-    _b3 = vld1q_f32(b_ptr);                                       \
-    b_ptr += 4;                                                   \
+    tmp = vld1q_u8(b_ptr);                                        \
+    tmp_low = vmovl_u8(vget_low_u8(tmp));                         \
+    tmp_high = vmovl_u8(vget_high_u8(tmp));                       \
+    _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));        \
+    vfmaq_f32(_b0, scale, zero_point);                            \
+    _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));       \
+    vfmaq_f32(_b1, scale, zero_point);                            \
+    _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));       \
+    vfmaq_f32(_b2, scale, zero_point);                            \
+    _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));      \
+    vfmaq_f32(_b3, scale, zero_point);                            \
+    b_ptr += 16;                                                  \
     output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 0); \
     output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx, 1); \
     output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx, 2); \

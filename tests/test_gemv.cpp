@@ -32,15 +32,15 @@ static int test_gemv(int N, int K)
     Randomize(weights[0]);
     Randomize(a[0]);
 
-    // for (int i = 0; i < K * N; i++)
-    // {
-    //     weights[0][i] = i;
-    // }
-    //
-    // for (int i = 0; i < K; i++)
-    // {
-    //     a[0][i] = 1;
-    // }
+    for (int i = 0; i < K * N; i++)
+    {
+        weights[0][i] = i - 10;
+    }
+
+    for (int i = 0; i < K; i++)
+    {
+        a[0][i] = 1;
+    }
 
     int ret = test_layer<ncnn::Gemv>("Gemv", pd, weights, a);
     if (ret != 0)
