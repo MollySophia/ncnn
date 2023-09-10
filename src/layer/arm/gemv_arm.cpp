@@ -38,9 +38,9 @@ int Gemv_arm::create_pipeline(const Option& opt)
 
     const float* const ptr0 = B_data;
 
-// (K, N)
-// (K / 64, N / 4, 64, 4)
-#pragma omp parallel for num_threads(opt.num_threads)
+    // (K, N)
+    // (K / 64, N / 4, 64, 4)
+    #pragma omp parallel for num_threads(opt.num_threads)
     for (int a = 0; a < K / KT; a++)
     {
         uint8_t* ptr = (uint8_t*)BT_data + a * KT * N;
@@ -60,7 +60,7 @@ int Gemv_arm::create_pipeline(const Option& opt)
                 }
             }
 
-            const auto [col_scales, col_zeropoints] = [&]() -> std::pair<std::array<float, 4>, std::array<float, 4>> {
+            const auto [col_scales, col_zeropoints] = [&]() -> std::pair<std::array<float, 4>, std::array<float, 4> > {
                 std::array<std::array<float, KT>, 4> col_datas;
                 std::array<float, 4> col_scales;
                 std::array<float, 4> col_zeropoints;
@@ -185,7 +185,7 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-#pragma omp parallel for num_threads(opt.num_threads)
+        #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
             const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
