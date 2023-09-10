@@ -30,78 +30,101 @@ int Gemv_arm::create_pipeline(const Option& opt)
     // std::cout << "B_numel = " << B_numel << std::endl;
     BT_data.create(B_numel, 1u, opt.workspace_allocator);
     const int block_numel = KT * 4;
-    scales.create(B_numel / block_numel, 4u, opt.workspace_allocator);
-    zero_points.create(B_numel / block_numel, 4u, opt.workspace_allocator);
+    scales.create(B_numel / KT, 4u, opt.workspace_allocator);
+    zero_points.create(B_numel / KT, 4u, opt.workspace_allocator);
 
     if (BT_data.empty() || scales.empty() || zero_points.empty())
         return -100;
 
     const float* const ptr0 = B_data;
 
-    // (K, N)
-    // (K / 64, N / 4, 64, 4)
-    #pragma omp parallel for num_threads(opt.num_threads)
+// (K, N)
+// (K / 64, N / 4, 64, 4)
+#pragma omp parallel for num_threads(opt.num_threads)
     for (int a = 0; a < K / KT; a++)
     {
         uint8_t* ptr = (uint8_t*)BT_data + a * KT * N;
         int block_id = a * (N / 4);
         for (int b = 0; b < N / 4; b++)
         {
-            std::array<float, KT * 4> tmp;
+            std::array<float, KT * 4> block_data;
             int index = 0;
+            // every (64, 1) block in (64, 4) superblock has a scale and a zero_point
             for (int c = 0; c < KT; c++)
             {
                 for (int d = 0; d < 4; d++)
                 {
                     int k = a * KT + c;
                     int n = b * 4 + d;
-                    tmp[index++] = ptr0[k * N + n];
+                    block_data[index++] = ptr0[k * N + n];
                 }
             }
-            // calculate scale and zero point
-            // float[i] = int[i] * scale + zero_point
-            // int[i] = (float[i] - zero_point) / scale
-            // scale = (max - min) / 255
-            float scale;
-            float zero_point;
-            float max = tmp[0];
-            float min = tmp[0];
-            for (int i = 1; i < KT * 4; i++)
-            {
-                if (tmp[i] > max)
+
+            const auto [col_scales, col_zeropoints] = [&]() -> std::pair<std::array<float, 4>, std::array<float, 4>> {
+                std::array<std::array<float, KT>, 4> col_datas;
+                std::array<float, 4> col_scales;
+                std::array<float, 4> col_zeropoints;
+
+                for (int i = 0; i < KT * 4; i++)
                 {
-                    max = tmp[i];
+                    col_datas[i % 4][i / 4] = block_data[i];
                 }
-                if (tmp[i] < min)
+
+                // calculate scale and zero point
+                // float[i] = int[i] * scale + zero_point
+                // int[i] = (float[i] - zero_point) / scale
+                // scale = (max - min) / 255
+                for (int col = 0; col < 4; col++)
                 {
-                    min = tmp[i];
+                    const auto& col_data = col_datas[col];
+                    float scale;
+                    float zero_point;
+                    float max = col_data[0];
+                    float min = col_data[0];
+                    for (int i = 1; i < static_cast<int>(col_data.size()); i++)
+                    {
+                        if (col_data[i] > max)
+                        {
+                            max = col_data[i];
+                        }
+                        if (col_data[i] < min)
+                        {
+                            min = col_data[i];
+                        }
+                    }
+                    // std::cout << "max = " << max << std::endl;
+                    // std::cout << "min = " << min << std::endl;
+                    if (max == min)
+                    {
+                        scale = 1.f;
+                    }
+                    else
+                    {
+                        scale = (max - min) / 255.f;
+                    }
+                    zero_point = min;
+                    col_scales[col] = scale;
+                    col_zeropoints[col] = zero_point;
+
+                    scales[block_id * 4 + col] = scale;
+                    zero_points[block_id * 4 + col] = zero_point;
                 }
-            }
-            // std::cout << "max = " << max << std::endl;
-            // std::cout << "min = " << min << std::endl;
-            if (max == min)
-            {
-                scale = 1.f;
-            }
-            else
-            {
-                scale = (max - min) / 255.f;
-            }
-            zero_point = min;
-            scales[block_id] = scale;
-            zero_points[block_id] = zero_point;
+
+                return {col_scales, col_zeropoints};
+            }();
+
             // std::cout << "scales[" << block_id << "] = " << scale << std::endl;
             // std::cout << "zero_points[" << block_id << "] = " << zero_point << std::endl;
             block_id++;
 
             for (int i = 0; i < KT * 4; i++)
             {
-                // std::cout << "pre quant, tmp[" << i << "] = " << tmp[i] << std::endl;
-                tmp[i] = (tmp[i] - zero_point) / scale;
-                assert(tmp[i] >= 0 && tmp[i] <= 255);
-                *ptr++ = std::round(tmp[i]);
-                // std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
-                // std::cout << "(int)tmp[" << i << "] = " << std::round(tmp[i]) << std::endl;
+                // std::cout << "pre quant, col_datas[" << i << "] = " << col_datas[i] << std::endl;
+                block_data[i] = (block_data[i] - col_zeropoints[i % 4]) / col_scales[i % 4];
+                assert(block_data[i] >= 0 && block_data[i] <= 255);
+                *ptr++ = std::round(block_data[i]);
+                // std::cout << "col_datas[" << i << "] = " << col_datas[i] << std::endl;
+                // std::cout << "(int)col_datas[" << i << "] = " << std::round(col_datas[i]) << std::endl;
             }
         }
     }
@@ -162,19 +185,15 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-        // const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N;
-        #pragma omp parallel for num_threads(opt.num_threads)
+#pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
             const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
             const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
 
-            const float32x4_t scale = vdupq_n_f32(scales[block_id]);
-            const float32x4_t zero_point = vdupq_n_f32(zero_points[block_id]);
-            // std::cout << "block_id = " << block_id << std::endl;
-            // std::cout << "scale = " << float32x4_to_string(scale) << std::endl;
-            // std::cout << "zero_point = " << float32x4_to_string(zero_point) << std::endl;
+            const float32x4_t scale = vld1q_f32(&scales[block_id * 4]);
+            const float32x4_t zero_point = vld1q_f32(&zero_points[block_id * 4]);
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output = vld1q_f32(output_ptr);
