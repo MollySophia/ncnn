@@ -26,21 +26,25 @@ int Gemv_arm::create_pipeline(const Option& opt)
 {
     assert(K % KT == 0);
     assert(N % 4 == 0);
-    BT_data.create(K * N, 1u, opt.workspace_allocator);
-    scales.create(KT * 4, 4u, opt.workspace_allocator);
-    zero_points.create(KT * 4, 4u, opt.workspace_allocator);
+    const int B_numel = B_data.total();
+    // std::cout << "B_numel = " << B_numel << std::endl;
+    BT_data.create(B_numel, 1u, opt.workspace_allocator);
+    const int block_numel = KT * 4;
+    scales.create(B_numel / block_numel, 4u, opt.workspace_allocator);
+    zero_points.create(B_numel / block_numel, 4u, opt.workspace_allocator);
 
     if (BT_data.empty() || scales.empty() || zero_points.empty())
         return -100;
 
-    const float* ptr0 = B_data;
-    uint8_t* ptr = BT_data;
-    int block_id = 0;
+    const float* const ptr0 = B_data;
 
     // (K, N)
     // (K / 64, N / 4, 64, 4)
+    #pragma omp parallel for num_threads(opt.num_threads)
     for (int a = 0; a < K / KT; a++)
     {
+        uint8_t* ptr = (uint8_t*)BT_data + a * KT * N;
+        int block_id = a * (N / 4);
         for (int b = 0; b < N / 4; b++)
         {
             std::array<float, KT * 4> tmp;
@@ -62,10 +66,8 @@ int Gemv_arm::create_pipeline(const Option& opt)
             float zero_point;
             float max = tmp[0];
             float min = tmp[0];
-            // std::cout << "tmp[0]=" << tmp[0] << std::endl;
             for (int i = 1; i < KT * 4; i++)
             {
-                // std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
                 if (tmp[i] > max)
                 {
                     max = tmp[i];
@@ -75,8 +77,8 @@ int Gemv_arm::create_pipeline(const Option& opt)
                     min = tmp[i];
                 }
             }
-            std::cout << "max = " << max << std::endl;
-            std::cout << "min = " << min << std::endl;
+            // std::cout << "max = " << max << std::endl;
+            // std::cout << "min = " << min << std::endl;
             if (max == min)
             {
                 scale = 1.f;
@@ -88,18 +90,18 @@ int Gemv_arm::create_pipeline(const Option& opt)
             zero_point = min;
             scales[block_id] = scale;
             zero_points[block_id] = zero_point;
-            std::cout << "scales[" << block_id << "] = " << scale << std::endl;
-            std::cout << "zero_points[" << block_id << "] = " << zero_point << std::endl;
+            // std::cout << "scales[" << block_id << "] = " << scale << std::endl;
+            // std::cout << "zero_points[" << block_id << "] = " << zero_point << std::endl;
             block_id++;
 
             for (int i = 0; i < KT * 4; i++)
             {
-                std::cout << "pre quant, tmp[" << i << "] = " << tmp[i] << std::endl;
+                // std::cout << "pre quant, tmp[" << i << "] = " << tmp[i] << std::endl;
                 tmp[i] = (tmp[i] - zero_point) / scale;
                 assert(tmp[i] >= 0 && tmp[i] <= 255);
                 *ptr++ = std::round(tmp[i]);
-                std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
-                std::cout << "(int)tmp[" << i << "] = " << std::round(tmp[i]) << std::endl;
+                // std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
+                // std::cout << "(int)tmp[" << i << "] = " << std::round(tmp[i]) << std::endl;
             }
         }
     }
@@ -140,7 +142,6 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         return -100;
 
     // A and B_data will both only be read once
-    #pragma omp parallel for num_threads(opt.num_threads)
     for (int k = 0; k < K; k += KT)
     {
         const float* a_ptr = (const float*)A + k;
@@ -161,16 +162,19 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-        const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N;
-        int block_id = (k / KT) * (N / 4);
-        for (int i = 0; i < N; i += 4, block_id++)
+        // const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N;
+        #pragma omp parallel for num_threads(opt.num_threads)
+        for (int i = 0; i < N; i += 4)
         {
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
+            const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
 
             const float32x4_t scale = vdupq_n_f32(scales[block_id]);
             const float32x4_t zero_point = vdupq_n_f32(zero_points[block_id]);
-            std::cout << "scale = " << float32x4_to_string(scale) << std::endl;
-            std::cout << "zero_point = " << float32x4_to_string(zero_point) << std::endl;
+            // std::cout << "block_id = " << block_id << std::endl;
+            // std::cout << "scale = " << float32x4_to_string(scale) << std::endl;
+            // std::cout << "zero_point = " << float32x4_to_string(zero_point) << std::endl;
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output = vld1q_f32(output_ptr);
@@ -208,7 +212,26 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
     output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx, 3);
 
             // 64x4
-            GEMV_KERNEL4x4(0);
+            // GEMV_KERNEL4x4(0);
+            tmp = vld1q_u8(b_ptr);
+            tmp_low = vmovl_u8(vget_low_u8(tmp));
+            tmp_high = vmovl_u8(vget_high_u8(tmp));
+            _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
+            // std::cout << "before dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
+            _b0 = vmlaq_f32(zero_point, _b0, scale);
+            // std::cout << "after dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
+            _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
+            _b1 = vmlaq_f32(zero_point, _b1, scale);
+            _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
+            _b2 = vmlaq_f32(zero_point, _b2, scale);
+            _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
+            _b3 = vmlaq_f32(zero_point, _b3, scale);
+            b_ptr += 16;
+            output = vfmaq_laneq_f32(output, _b0, _a0, 0);
+            output = vfmaq_laneq_f32(output, _b1, _a0, 1);
+            output = vfmaq_laneq_f32(output, _b2, _a0, 2);
+            output = vfmaq_laneq_f32(output, _b3, _a0, 3);
+
             GEMV_KERNEL4x4(1);
             GEMV_KERNEL4x4(2);
             GEMV_KERNEL4x4(3);

@@ -32,9 +32,16 @@ static int test_gemv(int N, int K)
     Randomize(weights[0]);
     Randomize(a[0]);
 
+    // for (int i = 0; i < K; i++) {
+    //     for (int j = 0; j < N; j++) {
+    //         weights[0][i * N + j] = 1. * (i * 256 + j) / 10;
+    //         // std::cout << "i=" << i << " j=" << j << ", i * N + j=" << i * N + j << ", weights[i * N + j]=" << weights[i * N + j] << std::endl;
+    //     }
+    // }
+
     for (int i = 0; i < K * N; i++)
     {
-        weights[0][i] = i * 3;
+        weights[0][i] = 1. * i / 1000;
     }
 
     for (int i = 0; i < K; i++)
@@ -63,6 +70,8 @@ int main()
         {64, 64},
         {256, 4},
         {256, 128},
+        {384, 256},
+        {384, 4},
         {4096, 4096},
     };
 
