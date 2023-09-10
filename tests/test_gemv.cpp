@@ -34,7 +34,7 @@ static int test_gemv(int N, int K)
 
     for (int i = 0; i < K * N; i++)
     {
-        weights[0][i] = i - 10;
+        weights[0][i] = i * 3;
     }
 
     for (int i = 0; i < K; i++)
@@ -59,6 +59,7 @@ int main()
     int kn[][2] = {
         // minimal unit: (64, 4)
         {64, 4},
+        {64, 8},
         {64, 64},
         {256, 4},
         {256, 128},

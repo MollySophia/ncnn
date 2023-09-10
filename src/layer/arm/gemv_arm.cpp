@@ -96,6 +96,7 @@ int Gemv_arm::create_pipeline(const Option& opt)
                 tmp[i] = (tmp[i] - zero_point) / scale;
                 assert(tmp[i] >= 0 && tmp[i] <= 255);
                 *ptr++ = static_cast<int>(tmp[i]);
+                std::cout << "(int)tmp[" << i << "] = " << static_cast<int>(tmp[i]) << std::endl;
             }
         }
     }
@@ -106,6 +107,22 @@ int Gemv_arm::create_pipeline(const Option& opt)
     }
 
     return 0;
+}
+
+std::string float32x4_to_string(float32x4_t a)
+{
+    float* ptr = (float*)&a;
+    std::string str = "[";
+    for (int i = 0; i < 4; i++)
+    {
+        str += std::to_string(ptr[i]);
+        if (i != 3)
+        {
+            str += ", ";
+        }
+    }
+    str += "]";
+    return str;
 }
 
 int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
@@ -148,6 +165,8 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
 
             const float32x4_t scale = vdupq_n_f32(scales[block_id]);
             const float32x4_t zero_point = vdupq_n_f32(zero_points[block_id]);
+            std::cout << "scale = " << float32x4_to_string(scale) << std::endl;
+            std::cout << "zero_point = " << float32x4_to_string(zero_point) << std::endl;
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output = vld1q_f32(output_ptr);
@@ -166,22 +185,22 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
             float32x4_t _b2;
             float32x4_t _b3;
 
-#define GEMV_KERNEL4x4(a_register_idx)                            \
-    tmp = vld1q_u8(b_ptr);                                        \
-    tmp_low = vmovl_u8(vget_low_u8(tmp));                         \
-    tmp_high = vmovl_u8(vget_high_u8(tmp));                       \
-    _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));        \
-    vfmaq_f32(_b0, scale, zero_point);                            \
-    _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));       \
-    vfmaq_f32(_b1, scale, zero_point);                            \
-    _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));       \
-    vfmaq_f32(_b2, scale, zero_point);                            \
-    _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));      \
-    vfmaq_f32(_b3, scale, zero_point);                            \
-    b_ptr += 16;                                                  \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 0); \
-    output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx, 1); \
-    output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx, 2); \
+#define GEMV_KERNEL4x4(a_register_idx)                                              \
+    tmp = vld1q_u8(b_ptr);                                                          \
+    tmp_low = vmovl_u8(vget_low_u8(tmp));                                           \
+    tmp_high = vmovl_u8(vget_high_u8(tmp));                                         \
+    _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));                          \
+    _b0 = vmlaq_f32(zero_point, _b0, scale);                                        \
+    _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));                         \
+    _b1 = vmlaq_f32(zero_point, _b1, scale);                                        \
+    _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));                         \
+    _b2 = vmlaq_f32(zero_point, _b2, scale);                                        \
+    _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));                        \
+    _b3 = vmlaq_f32(zero_point, _b3, scale);                                        \
+    b_ptr += 16;                                                                    \
+    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx, 0);                   \
+    output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx, 1);                   \
+    output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx, 2);                   \
     output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx, 3);
 
             // 64x4
