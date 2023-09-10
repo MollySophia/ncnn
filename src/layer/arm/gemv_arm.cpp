@@ -17,6 +17,7 @@
 #include <array>
 #include <assert.h>
 #include <arm_neon.h>
+#include <cmath>
 #include <iostream>
 
 namespace ncnn {
@@ -93,10 +94,12 @@ int Gemv_arm::create_pipeline(const Option& opt)
 
             for (int i = 0; i < KT * 4; i++)
             {
+                std::cout << "pre quant, tmp[" << i << "] = " << tmp[i] << std::endl;
                 tmp[i] = (tmp[i] - zero_point) / scale;
                 assert(tmp[i] >= 0 && tmp[i] <= 255);
-                *ptr++ = static_cast<int>(tmp[i]);
-                std::cout << "(int)tmp[" << i << "] = " << static_cast<int>(tmp[i]) << std::endl;
+                *ptr++ = std::round(tmp[i]);
+                std::cout << "tmp[" << i << "] = " << tmp[i] << std::endl;
+                std::cout << "(int)tmp[" << i << "] = " << std::round(tmp[i]) << std::endl;
             }
         }
     }
@@ -137,11 +140,10 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         return -100;
 
     // A and B_data will both only be read once
-    const float* a_ptr = A;
-    const uint8_t* b_ptr = BT_data;
-    int block_id = 0;
-    for (int k = 0; k < K; k += KT, a_ptr += KT)
+    #pragma omp parallel for num_threads(opt.num_threads)
+    for (int k = 0; k < K; k += KT)
     {
+        const float* a_ptr = (const float*)A + k;
         float32x4_t _a0 = vld1q_f32(a_ptr);
         float32x4_t _a1 = vld1q_f32(a_ptr + 4);
         float32x4_t _a2 = vld1q_f32(a_ptr + 8);
@@ -159,6 +161,8 @@ int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
+        const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N;
+        int block_id = (k / KT) * (N / 4);
         for (int i = 0; i < N; i += 4, block_id++)
         {
             // 64x4
