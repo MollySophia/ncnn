@@ -37,7 +37,10 @@ public:
     int M = 1;
     int N;
     int K;
-    Mat B_data;
+    Mat scales;
+    Mat zero_points;
+    Mat BT_data;
+    static const int KT = 16 * 4;
 };
 
 } // namespace ncnn

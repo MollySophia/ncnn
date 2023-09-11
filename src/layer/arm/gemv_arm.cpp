@@ -22,10 +22,12 @@
 
 namespace ncnn {
 
+#if 0
 int Gemv_arm::create_pipeline(const Option& opt)
 {
     assert(K % KT == 0);
     assert(N % 4 == 0);
+    return 0;
     const int B_numel = B_data.total();
     // std::cout << "B_numel = " << B_numel << std::endl;
     BT_data.create(B_numel, 1u, opt.workspace_allocator);
@@ -136,6 +138,7 @@ int Gemv_arm::create_pipeline(const Option& opt)
 
     return 0;
 }
+#endif
 
 std::string float32x4_to_string(float32x4_t a)
 {

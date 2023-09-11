@@ -24,15 +24,7 @@ class Gemv_arm : virtual public Gemv
 public:
     Gemv_arm() = default;
 
-    virtual int create_pipeline(const Option& opt);
-
     virtual int forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
-
-public:
-    Mat BT_data;
-    Mat scales;
-    Mat zero_points;
-    static const int KT = 16 * 4;
 };
 
 } // namespace ncnn
