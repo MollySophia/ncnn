@@ -107,15 +107,6 @@ int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_bl
                 output.fill(0.f);
             }
 
-            uint8x16_t tmp;
-            uint16x8_t tmp_low;
-            uint16x8_t tmp_high;
-
-            float32x4_t _b0;
-            float32x4_t _b1;
-            float32x4_t _b2;
-            float32x4_t _b3;
-
 #define GEMV_KERNEL4x4(a_register_idx)                            \
     for (int j = 0; j < 4; j++) \
     {   \
