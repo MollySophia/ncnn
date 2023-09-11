@@ -12,7 +12,7 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-#include "gemv_arm.h"
+#include "gemva32w8_arm.h"
 
 #include <array>
 #include <assert.h>
@@ -21,124 +21,6 @@
 #include <iostream>
 
 namespace ncnn {
-
-#if 0
-int Gemv_arm::create_pipeline(const Option& opt)
-{
-    assert(K % KT == 0);
-    assert(N % 4 == 0);
-    return 0;
-    const int B_numel = B_data.total();
-    // std::cout << "B_numel = " << B_numel << std::endl;
-    BT_data.create(B_numel, 1u, opt.workspace_allocator);
-    const int block_numel = KT * 4;
-    scales.create(B_numel / KT, 4u, opt.workspace_allocator);
-    zero_points.create(B_numel / KT, 4u, opt.workspace_allocator);
-
-    if (BT_data.empty() || scales.empty() || zero_points.empty())
-        return -100;
-
-    const float* const ptr0 = B_data;
-
-    // (K, N)
-    // (K / 64, N / 4, 64, 4)
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for (int a = 0; a < K / KT; a++)
-    {
-        uint8_t* ptr = (uint8_t*)BT_data + a * KT * N;
-        int block_id = a * (N / 4);
-        for (int b = 0; b < N / 4; b++)
-        {
-            std::array<float, KT * 4> block_data;
-            int index = 0;
-            // every (64, 1) block in (64, 4) superblock has a scale and a zero_point
-            for (int c = 0; c < KT; c++)
-            {
-                for (int d = 0; d < 4; d++)
-                {
-                    int k = a * KT + c;
-                    int n = b * 4 + d;
-                    block_data[index++] = ptr0[k * N + n];
-                }
-            }
-
-            const auto [col_scales, col_zeropoints] = [&]() -> std::pair<std::array<float, 4>, std::array<float, 4> > {
-                std::array<std::array<float, KT>, 4> col_datas;
-                std::array<float, 4> col_scales;
-                std::array<float, 4> col_zeropoints;
-
-                for (int i = 0; i < KT * 4; i++)
-                {
-                    col_datas[i % 4][i / 4] = block_data[i];
-                }
-
-                // calculate scale and zero point
-                // float[i] = int[i] * scale + zero_point
-                // int[i] = (float[i] - zero_point) / scale
-                // scale = (max - min) / 255
-                for (int col = 0; col < 4; col++)
-                {
-                    const auto& col_data = col_datas[col];
-                    float scale;
-                    float zero_point;
-                    float max = col_data[0];
-                    float min = col_data[0];
-                    for (int i = 1; i < static_cast<int>(col_data.size()); i++)
-                    {
-                        if (col_data[i] > max)
-                        {
-                            max = col_data[i];
-                        }
-                        if (col_data[i] < min)
-                        {
-                            min = col_data[i];
-                        }
-                    }
-                    // std::cout << "max = " << max << std::endl;
-                    // std::cout << "min = " << min << std::endl;
-                    if (max == min)
-                    {
-                        scale = 1.f;
-                    }
-                    else
-                    {
-                        scale = (max - min) / 255.f;
-                    }
-                    zero_point = min;
-                    col_scales[col] = scale;
-                    col_zeropoints[col] = zero_point;
-
-                    scales[block_id * 4 + col] = scale;
-                    zero_points[block_id * 4 + col] = zero_point;
-                }
-
-                return {col_scales, col_zeropoints};
-            }();
-
-            // std::cout << "scales[" << block_id << "] = " << scale << std::endl;
-            // std::cout << "zero_points[" << block_id << "] = " << zero_point << std::endl;
-            block_id++;
-
-            for (int i = 0; i < KT * 4; i++)
-            {
-                // std::cout << "pre quant, col_datas[" << i << "] = " << col_datas[i] << std::endl;
-                block_data[i] = (block_data[i] - col_zeropoints[i % 4]) / col_scales[i % 4];
-                assert(block_data[i] >= 0 && block_data[i] <= 255);
-                *ptr++ = std::round(block_data[i]);
-                // std::cout << "col_datas[" << i << "] = " << col_datas[i] << std::endl;
-                // std::cout << "(int)col_datas[" << i << "] = " << std::round(col_datas[i]) << std::endl;
-            }
-        }
-    }
-
-    if (opt.lightmode)
-    {
-        B_data.release();
-    }
-
-    return 0;
-}
-#endif
 
 std::string float32x4_to_string(float32x4_t a)
 {
@@ -156,7 +38,7 @@ std::string float32x4_to_string(float32x4_t a)
     return str;
 }
 
-int Gemv_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
+int GemvA32W8_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
     const Mat& A = bottom_blobs[0];
 

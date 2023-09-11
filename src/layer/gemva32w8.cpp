@@ -12,26 +12,26 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-#include "gemv.h"
+#include "gemva32w8.h"
 
 #include <array>
 
 namespace ncnn {
 
-Gemv::Gemv()
+GemvA32W8::GemvA32W8()
 {
     one_blob_only = true;
     support_inplace = false;
 }
 
-int Gemv::load_param(const ParamDict& pd)
+int GemvA32W8::load_param(const ParamDict& pd)
 {
     N = pd.get(0, 0);
     K = pd.get(1, 0);
     return 0;
 }
 
-int Gemv::load_model(const ModelBin& mb)
+int GemvA32W8::load_model(const ModelBin& mb)
 {
     BT_data = mb.load(K, N, 0);
     if (BT_data.empty())
@@ -47,7 +47,7 @@ int Gemv::load_model(const ModelBin& mb)
     return 0;
 }
 
-int Gemv::forward(const Mat& bottom_blob, Mat& top_blob, const Option& opt) const
+int GemvA32W8::forward(const Mat& bottom_blob, Mat& top_blob, const Option& opt) const
 {
     std::vector<Mat> bottom_blobs(1, bottom_blob);
     std::vector<Mat> top_blobs(1, top_blob);
@@ -56,7 +56,7 @@ int Gemv::forward(const Mat& bottom_blob, Mat& top_blob, const Option& opt) cons
     return ret;
 }
 
-int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
+int GemvA32W8::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
 #if 1
     const Mat& A = bottom_blobs[0];

@@ -12,7 +12,7 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-#include "layer/gemv.h"
+#include "layer/gemva32w8.h"
 #include "testutil.h"
 
 #include <iostream>
@@ -49,7 +49,7 @@ static int test_gemv(int N, int K)
         a[0][i] = 1;
     }
 
-    int ret = test_layer<ncnn::Gemv>("Gemv", pd, weights, a);
+    int ret = test_layer<ncnn::GemvA32W8>("Gemv", pd, weights, a);
     if (ret != 0)
     {
         fprintf(stderr, "test_gemv failed N=%d K=%d\n", N, K);

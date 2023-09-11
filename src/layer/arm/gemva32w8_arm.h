@@ -1,6 +1,6 @@
 // Tencent is pleased to support the open source community by making ncnn available.
 //
-// Copyright (C) 2020 THL A29 Limited, a Tencent company. All rights reserved.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
 //
 // Licensed under the BSD 3-Clause License (the "License"); you may not use this file except
 // in compliance with the License. You may obtain a copy of the License at
@@ -12,37 +12,21 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-#ifndef LAYER_GEMV_H
-#define LAYER_GEMV_H
+#ifndef LAYER_GEMV_A32W8_ARM_H
+#define LAYER_GEMV_A32W8_ARM_H
 
-#include "layer.h"
+#include "gemva32w8.h"
 
 namespace ncnn {
 
-// A * B, where B is a matrix and A is a vector. It is equivalent to B * A with tranB=1.
-class Gemv : public Layer
+class GemvA32W8_arm : virtual public GemvA32W8
 {
 public:
-    Gemv();
-
-    virtual int load_param(const ParamDict& pd);
-
-    virtual int load_model(const ModelBin& mb);
-
-    virtual int forward(const Mat& bottom_blob, Mat& top_blob, const Option& opt) const;
+    GemvA32W8_arm() = default;
 
     virtual int forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
-
-public:
-    int M = 1;
-    int N;
-    int K;
-    Mat scales;
-    Mat zero_points;
-    Mat BT_data;
-    static const int KT = 16 * 4;
 };
 
 } // namespace ncnn
 
-#endif // LAYER_GEMV_H
+#endif // LAYER_GEMV_A32W8_ARM_H
