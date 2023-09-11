@@ -78,7 +78,7 @@ int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_bl
             _a[i] = a_ptr[i];
         }
 
-#pragma omp parallel for num_threads(opt.num_threads)
+        #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
             const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
@@ -91,7 +91,8 @@ int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_bl
                 scale[j] = scales[block_id * 4 + j];
             }
             std::array<float, 4> zero_point; // = vld1q_f32(&zero_points[block_id * 4]);
-            for (int j = 0; j < 4; j++) {
+            for (int j = 0; j < 4; j++)
+            {
                 zero_point[j] = zero_points[block_id * 4 + j];
             }
 
@@ -107,14 +108,14 @@ int Gemv::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_bl
                 output.fill(0.f);
             }
 
-#define GEMV_KERNEL4x4(a_register_idx)                            \
-    for (int j = 0; j < 4; j++) \
-    {   \
-        output[j] += _a[a_register_idx * 4 + 0] * (static_cast<float>(b_ptr[j + 0]) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx * 4 + 1] * (static_cast<float>(b_ptr[j + 4]) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx * 4 + 2] * (static_cast<float>(b_ptr[j + 8]) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx * 4 + 3] * (static_cast<float>(b_ptr[j + 12]) * scale[j] + zero_point[j]);    \
-    }   \
+#define GEMV_KERNEL4x4(a_register_idx)                                                                            \
+    for (int j = 0; j < 4; j++)                                                                                   \
+    {                                                                                                             \
+        output[j] += _a[a_register_idx * 4 + 0] * (static_cast<float>(b_ptr[j + 0]) * scale[j] + zero_point[j]);  \
+        output[j] += _a[a_register_idx * 4 + 1] * (static_cast<float>(b_ptr[j + 4]) * scale[j] + zero_point[j]);  \
+        output[j] += _a[a_register_idx * 4 + 2] * (static_cast<float>(b_ptr[j + 8]) * scale[j] + zero_point[j]);  \
+        output[j] += _a[a_register_idx * 4 + 3] * (static_cast<float>(b_ptr[j + 12]) * scale[j] + zero_point[j]); \
+    }                                                                                                             \
     b_ptr += 16;
 
             GEMV_KERNEL4x4(0);
