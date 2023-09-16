@@ -57,7 +57,8 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
         #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
-            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
+            // 32 instead of 64
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 32;
             const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
 
