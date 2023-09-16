@@ -149,4 +149,3 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
 }
 
 } // namespace ncnn
-

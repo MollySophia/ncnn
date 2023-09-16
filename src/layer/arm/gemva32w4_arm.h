@@ -30,4 +30,3 @@ public:
 } // namespace ncnn
 
 #endif // LAYER_GEMV_A32W4_ARM_H
-
