@@ -33,7 +33,7 @@ int GemvA32W4::load_param(const ParamDict& pd)
 
 int GemvA32W4::load_model(const ModelBin& mb)
 {
-    BT_data = mb.load(K, N, 0);
+    BT_data = mb.load(K / 2, N, 0);
     if (BT_data.empty())
         return -100;
     if (BT_data.elemsize != 1)
