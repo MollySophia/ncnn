@@ -22,22 +22,6 @@
 
 namespace ncnn {
 
-std::string float32x4_to_string(float32x4_t a)
-{
-    float* ptr = (float*)&a;
-    std::string str = "[";
-    for (int i = 0; i < 4; i++)
-    {
-        str += std::to_string(ptr[i]);
-        if (i != 3)
-        {
-            str += ", ";
-        }
-    }
-    str += "]";
-    return str;
-}
-
 int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
     const Mat& A = bottom_blobs[0];
