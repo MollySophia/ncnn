@@ -15,6 +15,7 @@
 #include "gemva32w4.h"
 
 #include <array>
+#include <cassert>
 
 namespace ncnn {
 
@@ -82,7 +83,7 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
         for (int i = 0; i < N; i += 4)
         {
             // 32 instead of 64
-            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 32;
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + (k * N + i * 64) / 2;
             const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
 
@@ -132,6 +133,7 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
     b_ptr += 16;
 
             GEMV_KERNEL8x4(0, 1);
+            assert((b_ptr - (const uint8_t*)BT_data) <= BT_data.total() * BT_data.elemsize);
             GEMV_KERNEL8x4(2, 3);
             GEMV_KERNEL8x4(4, 5);
             GEMV_KERNEL8x4(6, 7);

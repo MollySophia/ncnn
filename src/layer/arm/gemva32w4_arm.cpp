@@ -178,7 +178,7 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
             GEMV_KERNEL8x4(12, 13);
             GEMV_KERNEL8x4(14, 15);
 
-#undef GEMV_KERNEL4x4
+#undef GEMV_KERNEL8x4
 
             vst1q_f32(output_ptr, output);
         }
