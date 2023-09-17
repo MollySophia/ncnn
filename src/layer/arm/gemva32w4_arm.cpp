@@ -70,7 +70,7 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-#pragma omp parallel for num_threads(opt.num_threads)
+        #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
             // 32 instead of 64
