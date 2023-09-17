@@ -22,7 +22,7 @@
 
 namespace ncnn {
 
-std::string float32x4_to_string(float32x4_t a)
+static std::string float32x4_to_string(float32x4_t a)
 {
     float* ptr = (float*)&a;
     std::string str = "[";

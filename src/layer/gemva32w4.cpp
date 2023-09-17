@@ -78,10 +78,11 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             _a[i] = a_ptr[i];
         }
 
-        #pragma omp parallel for num_threads(opt.num_threads)
+#pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
-            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 64;
+            // 32 instead of 64
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + k * N + i * 32;
             const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
 
@@ -108,34 +109,38 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
                 output.fill(0.f);
             }
 
-#define GEMV_KERNEL4x4(a_register_idx)                                                                            \
-    for (int j = 0; j < 4; j++)                                                                                   \
-    {                                                                                                             \
-        output[j] += _a[a_register_idx * 4 + 0] * (static_cast<float>(b_ptr[j + 0]) * scale[j] + zero_point[j]);  \
-        output[j] += _a[a_register_idx * 4 + 1] * (static_cast<float>(b_ptr[j + 4]) * scale[j] + zero_point[j]);  \
-        output[j] += _a[a_register_idx * 4 + 2] * (static_cast<float>(b_ptr[j + 8]) * scale[j] + zero_point[j]);  \
-        output[j] += _a[a_register_idx * 4 + 3] * (static_cast<float>(b_ptr[j + 12]) * scale[j] + zero_point[j]); \
-    }                                                                                                             \
+#define GEMV_KERNEL8x4(a_register_idx1, a_register_idx2)                                                  \
+    for (int j = 0; j < 4; j++)                                                                           \
+    {                                                                                                     \
+        int row0 = b_ptr[j + 0] & 15;                                                                     \
+        int row1 = b_ptr[j + 4] & 15;                                                                     \
+        int row2 = b_ptr[j + 8] & 15;                                                                     \
+        int row3 = b_ptr[j + 12] & 15;                                                                    \
+        int row4 = b_ptr[j + 0] >> 4;                                                                     \
+        int row5 = b_ptr[j + 4] >> 4;                                                                     \
+        int row6 = b_ptr[j + 8] >> 4;                                                                     \
+        int row7 = b_ptr[j + 12] >> 4;                                                                    \
+        output[j] += _a[a_register_idx1 * 4 + 0] * (static_cast<float>(row0) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 1] * (static_cast<float>(row1) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 2] * (static_cast<float>(row2) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 3] * (static_cast<float>(row3) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 0] * (static_cast<float>(row4) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 1] * (static_cast<float>(row5) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 2] * (static_cast<float>(row6) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 3] * (static_cast<float>(row7) * scale[j] + zero_point[j]); \
+    }                                                                                                     \
     b_ptr += 16;
 
-            GEMV_KERNEL4x4(0);
-            GEMV_KERNEL4x4(1);
-            GEMV_KERNEL4x4(2);
-            GEMV_KERNEL4x4(3);
-            GEMV_KERNEL4x4(4);
-            GEMV_KERNEL4x4(5);
-            GEMV_KERNEL4x4(6);
-            GEMV_KERNEL4x4(7);
-            GEMV_KERNEL4x4(8);
-            GEMV_KERNEL4x4(9);
-            GEMV_KERNEL4x4(10);
-            GEMV_KERNEL4x4(11);
-            GEMV_KERNEL4x4(12);
-            GEMV_KERNEL4x4(13);
-            GEMV_KERNEL4x4(14);
-            GEMV_KERNEL4x4(15);
+            GEMV_KERNEL8x4(0, 1);
+            GEMV_KERNEL8x4(2, 3);
+            GEMV_KERNEL8x4(4, 5);
+            GEMV_KERNEL8x4(6, 7);
+            GEMV_KERNEL8x4(8, 9);
+            GEMV_KERNEL8x4(10, 11);
+            GEMV_KERNEL8x4(12, 13);
+            GEMV_KERNEL8x4(14, 15);
 
-#undef GEMV_KERNEL4x4
+#undef GEMV_KERNEL8x4
 
             for (int j = 0; j < 4; j++)
             {

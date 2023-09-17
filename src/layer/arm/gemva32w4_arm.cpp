@@ -22,6 +22,22 @@
 
 namespace ncnn {
 
+static std::string float32x4_to_string(float32x4_t a)
+{
+    float* ptr = (float*)&a;
+    std::string str = "[";
+    for (int i = 0; i < 4; i++)
+    {
+        str += std::to_string(ptr[i]);
+        if (i != 3)
+        {
+            str += ", ";
+        }
+    }
+    str += "]";
+    return str;
+}
+
 int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
     const Mat& A = bottom_blobs[0];
@@ -54,7 +70,7 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
         float32x4_t _a14 = vld1q_f32(a_ptr + 56);
         float32x4_t _a15 = vld1q_f32(a_ptr + 60);
 
-        #pragma omp parallel for num_threads(opt.num_threads)
+#pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
             // 32 instead of 64
@@ -86,7 +102,7 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
 #define GEMV_KERNEL8x4(a_register_idx1, a_register_idx2)           \
     tmp = vld1q_u8(b_ptr);                                         \
     tmp2 = vshrq_n_u8(tmp, 4);                                     \
-    tmp = vandq_u8(tmp, vdupq_n_u8(0xf));                          \
+    tmp = vandq_u8(tmp, vdupq_n_u8(15));                           \
     tmp_low = vmovl_u8(vget_low_u8(tmp));                          \
     tmp_high = vmovl_u8(vget_high_u8(tmp));                        \
     _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));         \
@@ -118,7 +134,42 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
     output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx2, 3); \
     b_ptr += 16;
 
-            GEMV_KERNEL8x4(0, 1);
+            tmp = vld1q_u8(b_ptr);
+            tmp2 = vshrq_n_u8(tmp, 4);
+            tmp = vandq_u8(tmp, vdupq_n_u8(15));
+            tmp_low = vmovl_u8(vget_low_u8(tmp));
+            tmp_high = vmovl_u8(vget_high_u8(tmp));
+            _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
+            std::cout << "before dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
+            _b0 = vmlaq_f32(zero_point, _b0, scale);
+            std::cout << "after dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
+            _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
+            _b1 = vmlaq_f32(zero_point, _b1, scale);
+            _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
+            _b2 = vmlaq_f32(zero_point, _b2, scale);
+            _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
+            _b3 = vmlaq_f32(zero_point, _b3, scale);
+            output = vfmaq_laneq_f32(output, _b0, _a0, 0);
+            output = vfmaq_laneq_f32(output, _b1, _a0, 1);
+            output = vfmaq_laneq_f32(output, _b2, _a0, 2);
+            output = vfmaq_laneq_f32(output, _b3, _a0, 3);
+            tmp = tmp2;
+            tmp_low = vmovl_u8(vget_low_u8(tmp));
+            tmp_high = vmovl_u8(vget_high_u8(tmp));
+            _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
+            _b0 = vmlaq_f32(zero_point, _b0, scale);
+            _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
+            _b1 = vmlaq_f32(zero_point, _b1, scale);
+            _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
+            _b2 = vmlaq_f32(zero_point, _b2, scale);
+            _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
+            _b3 = vmlaq_f32(zero_point, _b3, scale);
+            output = vfmaq_laneq_f32(output, _b0, _a1, 0);
+            output = vfmaq_laneq_f32(output, _b1, _a1, 1);
+            output = vfmaq_laneq_f32(output, _b2, _a1, 2);
+            output = vfmaq_laneq_f32(output, _b3, _a1, 3);
+            b_ptr += 16;
+
             GEMV_KERNEL8x4(2, 3);
             GEMV_KERNEL8x4(4, 5);
             GEMV_KERNEL8x4(6, 7);
