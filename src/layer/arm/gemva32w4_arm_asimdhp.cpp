@@ -52,111 +52,140 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
     // A and B_data will both only be read once
     for (int k = 0; k < K; k += KT)
     {
+        // read 64 a elements
         const float* a_ptr = (const float*)A + k;
-        float32x4_t _a0 = vld1q_f32(a_ptr);
-        float32x4_t _a1 = vld1q_f32(a_ptr + 4);
-        float32x4_t _a2 = vld1q_f32(a_ptr + 8);
-        float32x4_t _a3 = vld1q_f32(a_ptr + 12);
-        float32x4_t _a4 = vld1q_f32(a_ptr + 16);
-        float32x4_t _a5 = vld1q_f32(a_ptr + 20);
-        float32x4_t _a6 = vld1q_f32(a_ptr + 24);
-        float32x4_t _a7 = vld1q_f32(a_ptr + 28);
-        float32x4_t _a8 = vld1q_f32(a_ptr + 32);
-        float32x4_t _a9 = vld1q_f32(a_ptr + 36);
-        float32x4_t _a10 = vld1q_f32(a_ptr + 40);
-        float32x4_t _a11 = vld1q_f32(a_ptr + 44);
-        float32x4_t _a12 = vld1q_f32(a_ptr + 48);
-        float32x4_t _a13 = vld1q_f32(a_ptr + 52);
-        float32x4_t _a14 = vld1q_f32(a_ptr + 56);
-        float32x4_t _a15 = vld1q_f32(a_ptr + 60);
+        float32x4_t _t0 = vld1q_f32(a_ptr);
+        float32x4_t _t1 = vld1q_f32(a_ptr + 4);
+        float32x4_t _t2 = vld1q_f32(a_ptr + 8);
+        float32x4_t _t3 = vld1q_f32(a_ptr + 12);
+        float32x4_t _t4 = vld1q_f32(a_ptr + 16);
+        float32x4_t _t5 = vld1q_f32(a_ptr + 20);
+        float32x4_t _t6 = vld1q_f32(a_ptr + 24);
+        float32x4_t _t7 = vld1q_f32(a_ptr + 28);
+        float16x4_t _tfp16_0 = vcvt_f16_f32(_t0);
+        float16x4_t _tfp16_2 = vcvt_f16_f32(_t2);
+        float16x4_t _tfp16_4 = vcvt_f16_f32(_t4);
+        float16x4_t _tfp16_6 = vcvt_f16_f32(_t6);
+        float16x8_t _a0 = vcvt_high_f16_f32(_tfp16_0, _t1);
+        float16x8_t _a1 = vcvt_high_f16_f32(_tfp16_2, _t3);
+        float16x8_t _a2 = vcvt_high_f16_f32(_tfp16_4, _t5);
+        float16x8_t _a3 = vcvt_high_f16_f32(_tfp16_6, _t7);
+        float32x4_t _t8 = vld1q_f32(a_ptr + 32);
+        float32x4_t _t9 = vld1q_f32(a_ptr + 36);
+        float32x4_t _t10 = vld1q_f32(a_ptr + 40);
+        float32x4_t _t11 = vld1q_f32(a_ptr + 44);
+        float32x4_t _t12 = vld1q_f32(a_ptr + 48);
+        float32x4_t _t13 = vld1q_f32(a_ptr + 52);
+        float32x4_t _t14 = vld1q_f32(a_ptr + 56);
+        float32x4_t _t15 = vld1q_f32(a_ptr + 60);
+        float16x4_t _tfp16_8 = vcvt_f16_f32(_t8);
+        float16x4_t _tfp16_10 = vcvt_f16_f32(_t10);
+        float16x4_t _tfp16_12 = vcvt_f16_f32(_t12);
+        float16x4_t _tfp16_14 = vcvt_f16_f32(_t14);
+        float16x8_t _a4 = vcvt_high_f16_f32(_tfp16_8, _t9);
+        float16x8_t _a5 = vcvt_high_f16_f32(_tfp16_10, _t11);
+        float16x8_t _a6 = vcvt_high_f16_f32(_tfp16_12, _t13);
+        float16x8_t _a7 = vcvt_high_f16_f32(_tfp16_14, _t15);
 
-        #pragma omp parallel for num_threads(opt.num_threads)
-        for (int i = 0; i < N; i += 4)
+        const int kBlockCols = 8;
+
+#pragma omp parallel for num_threads(opt.num_threads)
+        for (int i = 0; i < N; i += kBlockCols)
         {
+            const int block_id = (k / KT) * (N / kBlockCols) + (i / kBlockCols);
             // the offset is half of a32w8
-            const uint8_t* b_ptr = (const uint8_t*)BT_data + (k * N + i * 64) / 2;
-            const int block_id = (k / KT) * (N / 4) + (i / 4);
-            // 64x4
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + (block_id * KT * kBlockCols) / 2;
 
-            const float32x4_t scale = vld1q_f32(&scales[block_id * 4]);
-            const float32x4_t zero_point = vld1q_f32(&zero_points[block_id * 4]);
+            // 64x8 (KT*8)
+
+            const float16x8_t scale = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols);
+            const float16x8_t zero_point = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols);
 
             float* output_ptr = (float*)top_blob + i;
-            float32x4_t output = vld1q_f32(output_ptr);
-
-            if (k == 0)
-            {
-                output = vdupq_n_f32(0.f);
-            }
+            float32x4_t output_low = vld1q_f32(output_ptr);
+            float32x4_t output_high = vld1q_f32(output_ptr + 4);
+            float16x8_t fp16_acc = vdupq_n_f16(0.f);
 
             uint8x16_t tmp;
             uint8x16_t tmp2;
-            float16x8_t tmp_low;
-            float16x8_t tmp_high;
+            uint8x16_t tmp3;
 
-            float32x4_t _b0;
-            float32x4_t _b1;
-            float32x4_t _b2;
-            float32x4_t _b3;
+            float16x8_t _b0;
+            float16x8_t _b1;
+            float16x8_t _b2;
+            float16x8_t _b3;
 
             // uint16x8_t tmp_low;
             // uint16x8_t tmp_high;
-    // _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));         
-    // _b0 = vmlaq_f32(zero_point, _b0, scale);                       
-    // _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));        
-    // _b1 = vmlaq_f32(zero_point, _b1, scale);                       
-    // _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));        
-    // _b2 = vmlaq_f32(zero_point, _b2, scale);                       
-    // _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));       
-    // _b3 = vmlaq_f32(zero_point, _b3, scale);                       
+            // _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
+            // _b0 = vmlaq_f32(zero_point, _b0, scale);
+            // _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
+            // _b1 = vmlaq_f32(zero_point, _b1, scale);
+            // _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
+            // _b2 = vmlaq_f32(zero_point, _b2, scale);
+            // _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
+            // _b3 = vmlaq_f32(zero_point, _b3, scale);
 
-#define GEMV_KERNEL8x4(a_register_idx1, a_register_idx2)           \
+#define GEMV_KERNEL8x8(a_register_idx1)                            \
     tmp = vld1q_u8(b_ptr);                                         \
+    tmp3 = vld1q_u8(b_ptr + 16);                                   \
     tmp2 = vshrq_n_u8(tmp, 4);                                     \
     tmp = vandq_u8(tmp, vdupq_n_u8(15));                           \
-    tmp_low = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));                          \
-    tmp_high = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));                        \
-    _b0 = vcvt_f32_f16(vget_low_f16(tmp_low));         \
-    _b0 = vmlaq_f32(zero_point, _b0, scale);                       \
-    _b1 = vcvt_high_f32_f16(tmp_low);        \
-    _b1 = vmlaq_f32(zero_point, _b1, scale);                       \
-    _b2 = vcvt_f32_f16(vget_low_f16(tmp_high));         \
-    _b2 = vmlaq_f32(zero_point, _b2, scale);                       \
-    _b3 = vcvt_high_f32_f16(tmp_high);       \
-    _b3 = vmlaq_f32(zero_point, _b3, scale);                       \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx1, 0); \
-    output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx1, 1); \
-    output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx1, 2); \
-    output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx1, 3); \
-    tmp = tmp2;                                                    \
-    tmp_low = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));                          \
-    tmp_high = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));                        \
-    _b0 = vcvt_f32_f16(vget_low_f16(tmp_low));         \
-    _b0 = vmlaq_f32(zero_point, _b0, scale);                       \
-    _b1 = vcvt_high_f32_f16(tmp_low);        \
-    _b1 = vmlaq_f32(zero_point, _b1, scale);                       \
-    _b2 = vcvt_f32_f16(vget_low_f16(tmp_high));         \
-    _b2 = vmlaq_f32(zero_point, _b2, scale);                       \
-    _b3 = vcvt_high_f32_f16(tmp_high);       \
-    _b3 = vmlaq_f32(zero_point, _b3, scale);                       \
-    output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx2, 0); \
-    output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx2, 1); \
-    output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx2, 2); \
-    output = vfmaq_laneq_f32(output, _b3, _a##a_register_idx2, 3); \
-    b_ptr += 16;
+    _b0 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));               \
+    _b1 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));              \
+    _b0 = vmulq_f16(_b0, scale);                                   \
+    _b1 = vmulq_f16(_b1, scale);                                   \
+    _b0 = vaddq_f16(_b0, zero_point);                              \
+    _b1 = vaddq_f16(_b1, zero_point);                              \
+    _b2 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp2)));              \
+    _b3 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp2)));             \
+    _b2 = vmulq_f16(_b2, scale);                                   \
+    _b3 = vmulq_f16(_b3, scale);                                   \
+    _b2 = vaddq_f16(_b2, zero_point);                              \
+    _b3 = vaddq_f16(_b3, zero_point);                              \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b0, _a##a_register_idx1, 0); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b1, _a##a_register_idx1, 1); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b2, _a##a_register_idx1, 2); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b3, _a##a_register_idx1, 3); \
+    tmp = tmp3;                                                    \
+    tmp2 = vshrq_n_u8(tmp, 4);                                     \
+    tmp = vandq_u8(tmp, vdupq_n_u8(15));                           \
+    _b0 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));               \
+    _b1 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));              \
+    _b0 = vmulq_f16(_b0, scale);                                   \
+    _b1 = vmulq_f16(_b1, scale);                                   \
+    _b0 = vaddq_f16(_b0, zero_point);                              \
+    _b1 = vaddq_f16(_b1, zero_point);                              \
+    _b2 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp2)));              \
+    _b3 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp2)));             \
+    _b2 = vmulq_f16(_b2, scale);                                   \
+    _b3 = vmulq_f16(_b3, scale);                                   \
+    _b2 = vaddq_f16(_b2, zero_point);                              \
+    _b3 = vaddq_f16(_b3, zero_point);                              \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b0, _a##a_register_idx1, 4); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b1, _a##a_register_idx1, 5); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b2, _a##a_register_idx1, 6); \
+    fp16_acc = vfmaq_laneq_f16(fp16_acc, _b3, _a##a_register_idx1, 7); \
+    b_ptr += 32;
 
-            GEMV_KERNEL8x4(0, 1);
-            GEMV_KERNEL8x4(2, 3);
-            GEMV_KERNEL8x4(4, 5);
-            GEMV_KERNEL8x4(6, 7);
-            GEMV_KERNEL8x4(8, 9);
-            GEMV_KERNEL8x4(10, 11);
-            GEMV_KERNEL8x4(12, 13);
-            GEMV_KERNEL8x4(14, 15);
+            GEMV_KERNEL8x8(0);
+            GEMV_KERNEL8x8(1);
+            GEMV_KERNEL8x8(2);
+            GEMV_KERNEL8x8(3);
+            GEMV_KERNEL8x8(4);
+            GEMV_KERNEL8x8(5);
+            GEMV_KERNEL8x8(6);
+            GEMV_KERNEL8x8(7);
 
-#undef GEMV_KERNEL8x4
+#undef GEMV_KERNEL8x8
 
-            vst1q_f32(output_ptr, output);
+            if (k == 0)
+            {
+                output_low = vdupq_n_f32(0.f);
+                output_high = vdupq_n_f32(0.f);
+            }
+            vst1q_f32(output_ptr, vaddq_f32(vcvt_f32_f16(vget_low_f16(fp16_acc)), output_low));
+            vst1q_f32(output_ptr + 4, vaddq_f32(vcvt_f32_f16(vget_high_f16(fp16_acc)), output_high));
         }
     }
 

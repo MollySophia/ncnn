@@ -40,10 +40,11 @@ int GemvA32W4::load_model(const ModelBin& mb)
         return -100;
     if (BT_data.elemsize != 1)
         return -99;
-    scales = mb.load(K * N / 64, 1);
+    // 2 comes from a float32 contains two float16
+    scales = mb.load(K / 2 * N / 64, 1);
     if (scales.empty())
         return -100;
-    zero_points = mb.load(K * N / 64, 1);
+    zero_points = mb.load(K / 2 * N / 64, 1);
     if (zero_points.empty())
         return -100;
     return 0;
@@ -70,7 +71,6 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
     if (top_blob.empty())
         return -100;
 
-            std::cout << "bbb" << std::endl;
     // A and B_data will both only be read once
     for (int k = 0; k < K; k += KT)
     {
@@ -81,23 +81,27 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             _a[i] = a_ptr[i];
         }
 
+        const int kBlockCols = 8;
+
         #pragma omp parallel for num_threads(opt.num_threads)
-        for (int i = 0; i < N; i += 4)
+        for (int i = 0; i < N; i += kBlockCols)
         {
             // the offset is half of a32w8
-            const uint8_t* b_ptr = (const uint8_t*)BT_data + (k * N + i * 64) / 2;
-            const int block_id = (k / KT) * (N / 4) + (i / 4);
-            // 64x4
+            const int block_id = (k / KT) * (N / kBlockCols) + (i / kBlockCols);
+            // the offset is half of a32w8
+            const uint8_t* b_ptr = (const uint8_t*)BT_data + (block_id * KT * kBlockCols) / 2;
 
-            std::array<float, 4> scale; // = vld1q_f32(&scales[block_id * 4]);
-            for (int j = 0; j < 4; j++)
+            // 64x8
+
+            std::array<float, kBlockCols> scale; // = vld1q_f32(&scales[block_id * 4]);
+            for (int j = 0; j < kBlockCols; j++)
             {
-                scale[j] = scales[block_id * 4 + j];
+                scale[j] = scales[block_id * kBlockCols + j];
             }
-            std::array<float, 4> zero_point; // = vld1q_f32(&zero_points[block_id * 4]);
-            for (int j = 0; j < 4; j++)
+            std::array<float, kBlockCols> zero_point; // = vld1q_f32(&zero_points[block_id * 4]);
+            for (int j = 0; j < kBlockCols; j++)
             {
-                zero_point[j] = zero_points[block_id * 4 + j];
+                zero_point[j] = zero_points[block_id * kBlockCols + j];
             }
 
             float* output_ptr = (float*)top_blob + i;
