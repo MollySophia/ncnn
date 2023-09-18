@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cassert>
+#include <iostream>
 
 namespace ncnn {
 
@@ -69,6 +70,7 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
     if (top_blob.empty())
         return -100;
 
+            std::cout << "bbb" << std::endl;
     // A and B_data will both only be read once
     for (int k = 0; k < K; k += KT)
     {
@@ -82,7 +84,7 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
         #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += 4)
         {
-            // 32 instead of 64
+            // the offset is half of a32w8
             const uint8_t* b_ptr = (const uint8_t*)BT_data + (k * N + i * 64) / 2;
             const int block_id = (k / KT) * (N / 4) + (i / 4);
             // 64x4
