@@ -40,11 +40,12 @@ int GemvA32W4::load_model(const ModelBin& mb)
         return -100;
     if (BT_data.elemsize != 1)
         return -99;
-    // 2 comes from a float32 contains two float16
-    scales = mb.load(K / 2 * N / 64, 1);
+    // The frist 2 comes from a float32 contains two float16
+    // The second 2 comes from a col contains two scales/zero_points
+    scales = mb.load(K / 2 * N / 64 * 2, 1);
     if (scales.empty())
         return -100;
-    zero_points = mb.load(K / 2 * N / 64, 1);
+    zero_points = mb.load(K / 2 * N / 64 * 2, 1);
     if (zero_points.empty())
         return -100;
     return 0;

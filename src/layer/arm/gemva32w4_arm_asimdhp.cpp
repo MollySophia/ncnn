@@ -98,8 +98,10 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
 
             // 64x8 (KT*8)
 
-            const float16x8_t scale = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols);
-            const float16x8_t zero_point = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols);
+            const float16x8_t scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2);
+            const float16x8_t zero_point0 = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols * 2);
+            const float16x8_t scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2 + kBlockCols);
+            const float16x8_t zero_point1 = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols * 2 + kBlockCols);
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output_low = vld1q_f32(output_ptr);
@@ -126,23 +128,23 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
             // _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
             // _b3 = vmlaq_f32(zero_point, _b3, scale);
 
-#define GEMV_KERNEL8x8(a_register_idx1)                            \
+#define GEMV_KERNEL8x8(a_register_idx1, scale_idx)                            \
     tmp = vld1q_u8(b_ptr);                                         \
     tmp3 = vld1q_u8(b_ptr + 16);                                   \
     tmp2 = vshrq_n_u8(tmp, 4);                                     \
     tmp = vandq_u8(tmp, vdupq_n_u8(15));                           \
     _b0 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));               \
     _b1 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));              \
-    _b0 = vmulq_f16(_b0, scale);                                   \
-    _b1 = vmulq_f16(_b1, scale);                                   \
-    _b0 = vaddq_f16(_b0, zero_point);                              \
-    _b1 = vaddq_f16(_b1, zero_point);                              \
+    _b0 = vmulq_f16(_b0, scale##scale_idx);                                   \
+    _b1 = vmulq_f16(_b1, scale##scale_idx);                                   \
+    _b0 = vaddq_f16(_b0, zero_point##scale_idx);                              \
+    _b1 = vaddq_f16(_b1, zero_point##scale_idx);                              \
     _b2 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp2)));              \
     _b3 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp2)));             \
-    _b2 = vmulq_f16(_b2, scale);                                   \
-    _b3 = vmulq_f16(_b3, scale);                                   \
-    _b2 = vaddq_f16(_b2, zero_point);                              \
-    _b3 = vaddq_f16(_b3, zero_point);                              \
+    _b2 = vmulq_f16(_b2, scale##scale_idx);                                   \
+    _b3 = vmulq_f16(_b3, scale##scale_idx);                                   \
+    _b2 = vaddq_f16(_b2, zero_point##scale_idx);                              \
+    _b3 = vaddq_f16(_b3, zero_point##scale_idx);                              \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b0, _a##a_register_idx1, 0); \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b1, _a##a_register_idx1, 1); \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b2, _a##a_register_idx1, 2); \
@@ -152,30 +154,30 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
     tmp = vandq_u8(tmp, vdupq_n_u8(15));                           \
     _b0 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp)));               \
     _b1 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp)));              \
-    _b0 = vmulq_f16(_b0, scale);                                   \
-    _b1 = vmulq_f16(_b1, scale);                                   \
-    _b0 = vaddq_f16(_b0, zero_point);                              \
-    _b1 = vaddq_f16(_b1, zero_point);                              \
+    _b0 = vmulq_f16(_b0, scale##scale_idx);                                   \
+    _b1 = vmulq_f16(_b1, scale##scale_idx);                                   \
+    _b0 = vaddq_f16(_b0, zero_point##scale_idx);                              \
+    _b1 = vaddq_f16(_b1, zero_point##scale_idx);                              \
     _b2 = vcvtq_f16_u16(vmovl_u8(vget_low_u8(tmp2)));              \
     _b3 = vcvtq_f16_u16(vmovl_u8(vget_high_u8(tmp2)));             \
-    _b2 = vmulq_f16(_b2, scale);                                   \
-    _b3 = vmulq_f16(_b3, scale);                                   \
-    _b2 = vaddq_f16(_b2, zero_point);                              \
-    _b3 = vaddq_f16(_b3, zero_point);                              \
+    _b2 = vmulq_f16(_b2, scale##scale_idx);                                   \
+    _b3 = vmulq_f16(_b3, scale##scale_idx);                                   \
+    _b2 = vaddq_f16(_b2, zero_point##scale_idx);                              \
+    _b3 = vaddq_f16(_b3, zero_point##scale_idx);                              \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b0, _a##a_register_idx1, 4); \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b1, _a##a_register_idx1, 5); \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b2, _a##a_register_idx1, 6); \
     fp16_acc = vfmaq_laneq_f16(fp16_acc, _b3, _a##a_register_idx1, 7); \
     b_ptr += 32;
 
-            GEMV_KERNEL8x8(0);
-            GEMV_KERNEL8x8(1);
-            GEMV_KERNEL8x8(2);
-            GEMV_KERNEL8x8(3);
-            GEMV_KERNEL8x8(4);
-            GEMV_KERNEL8x8(5);
-            GEMV_KERNEL8x8(6);
-            GEMV_KERNEL8x8(7);
+            GEMV_KERNEL8x8(0, 0);
+            GEMV_KERNEL8x8(1, 0);
+            GEMV_KERNEL8x8(2, 0);
+            GEMV_KERNEL8x8(3, 0);
+            GEMV_KERNEL8x8(4, 1);
+            GEMV_KERNEL8x8(5, 1);
+            GEMV_KERNEL8x8(6, 1);
+            GEMV_KERNEL8x8(7, 1);
 
 #undef GEMV_KERNEL8x8
 
