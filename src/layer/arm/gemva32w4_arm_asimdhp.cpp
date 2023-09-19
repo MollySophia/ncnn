@@ -127,9 +127,7 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
             // 64x8 (KT*8)
 
             const float16x8_t scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2);
-            const float16x8_t zero_point0 = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols * 2);
             const float16x8_t scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2 + kBlockCols);
-            const float16x8_t zero_point1 = vld1q_f16(static_cast<const float16_t*>(zero_points) + block_id * kBlockCols * 2 + kBlockCols);
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output_low = vld1q_f32(output_ptr);
@@ -173,8 +171,6 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
     _b1 = vcvtq_f16_s16(vmovl_s8(vreinterpret_s8_u8(_u1)));            \
     _b0 = vmulq_f16(_b0, scale##scale_idx);                            \
     _b1 = vmulq_f16(_b1, scale##scale_idx);                            \
-    _b0 = vaddq_f16(_b0, zero_point##scale_idx);                       \
-    _b1 = vaddq_f16(_b1, zero_point##scale_idx);                       \
                                                                        \
     _u2 = vget_low_u8(tmp2);                                           \
     _u3 = vget_high_u8(tmp2);                                          \
@@ -200,8 +196,6 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
     _b1 = vcvtq_f16_s16(vmovl_s8(vreinterpret_s8_u8(_u1)));            \
     _b0 = vmulq_f16(_b0, scale##scale_idx);                            \
     _b1 = vmulq_f16(_b1, scale##scale_idx);                            \
-    _b0 = vaddq_f16(_b0, zero_point##scale_idx);                       \
-    _b1 = vaddq_f16(_b1, zero_point##scale_idx);                       \
                                                                        \
     _u2 = vget_low_u8(tmp2);                                           \
     _u3 = vget_high_u8(tmp2);                                          \
