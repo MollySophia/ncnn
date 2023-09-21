@@ -76,7 +76,6 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
             // 64x4
 
             const float32x4_t scale = vld1q_f32(&scales[block_id * 4]);
-            const float32x4_t zero_point = vld1q_f32(&zero_points[block_id * 4]);
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output = vld1q_f32(output_ptr);
@@ -103,13 +102,9 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
     tmp_low = vmovl_u8(vget_low_u8(tmp));                          \
     tmp_high = vmovl_u8(vget_high_u8(tmp));                        \
     _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));         \
-    _b0 = vmlaq_f32(zero_point, _b0, scale);                       \
     _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));        \
-    _b1 = vmlaq_f32(zero_point, _b1, scale);                       \
     _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));        \
-    _b2 = vmlaq_f32(zero_point, _b2, scale);                       \
     _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));       \
-    _b3 = vmlaq_f32(zero_point, _b3, scale);                       \
     output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx1, 0); \
     output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx1, 1); \
     output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx1, 2); \
@@ -118,13 +113,9 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
     tmp_low = vmovl_u8(vget_low_u8(tmp));                          \
     tmp_high = vmovl_u8(vget_high_u8(tmp));                        \
     _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));         \
-    _b0 = vmlaq_f32(zero_point, _b0, scale);                       \
     _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));        \
-    _b1 = vmlaq_f32(zero_point, _b1, scale);                       \
     _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));        \
-    _b2 = vmlaq_f32(zero_point, _b2, scale);                       \
     _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));       \
-    _b3 = vmlaq_f32(zero_point, _b3, scale);                       \
     output = vfmaq_laneq_f32(output, _b0, _a##a_register_idx2, 0); \
     output = vfmaq_laneq_f32(output, _b1, _a##a_register_idx2, 1); \
     output = vfmaq_laneq_f32(output, _b2, _a##a_register_idx2, 2); \
@@ -138,14 +129,10 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
             tmp_high = vmovl_u8(vget_high_u8(tmp));
             _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
             // std::cout << "before dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
-            _b0 = vmlaq_f32(zero_point, _b0, scale);
             // std::cout << "after dequant, _b0 = " << float32x4_to_string(_b0) << std::endl;
             _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
-            _b1 = vmlaq_f32(zero_point, _b1, scale);
             _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
-            _b2 = vmlaq_f32(zero_point, _b2, scale);
             _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
-            _b3 = vmlaq_f32(zero_point, _b3, scale);
             output = vfmaq_laneq_f32(output, _b0, _a0, 0);
             output = vfmaq_laneq_f32(output, _b1, _a0, 1);
             output = vfmaq_laneq_f32(output, _b2, _a0, 2);
@@ -154,13 +141,9 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
             tmp_low = vmovl_u8(vget_low_u8(tmp));
             tmp_high = vmovl_u8(vget_high_u8(tmp));
             _b0 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_low)));
-            _b0 = vmlaq_f32(zero_point, _b0, scale);
             _b1 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_low)));
-            _b1 = vmlaq_f32(zero_point, _b1, scale);
             _b2 = vcvtq_f32_u32(vmovl_u16(vget_low_u16(tmp_high)));
-            _b2 = vmlaq_f32(zero_point, _b2, scale);
             _b3 = vcvtq_f32_u32(vmovl_u16(vget_high_u16(tmp_high)));
-            _b3 = vmlaq_f32(zero_point, _b3, scale);
             output = vfmaq_laneq_f32(output, _b0, _a1, 0);
             output = vfmaq_laneq_f32(output, _b1, _a1, 1);
             output = vfmaq_laneq_f32(output, _b2, _a1, 2);

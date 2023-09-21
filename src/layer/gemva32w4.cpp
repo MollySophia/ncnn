@@ -45,9 +45,6 @@ int GemvA32W4::load_model(const ModelBin& mb)
     scales = mb.load(K / 2 * N / 64 * 2, 1);
     if (scales.empty())
         return -100;
-    zero_points = mb.load(K / 2 * N / 64 * 2, 1);
-    if (zero_points.empty())
-        return -100;
     return 0;
 }
 
@@ -99,11 +96,6 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             {
                 scale[j] = scales[block_id * kBlockCols + j];
             }
-            std::array<float, kBlockCols> zero_point; // = vld1q_f32(&zero_points[block_id * 4]);
-            for (int j = 0; j < kBlockCols; j++)
-            {
-                zero_point[j] = zero_points[block_id * kBlockCols + j];
-            }
 
             float* output_ptr = (float*)top_blob + i;
             std::array<float, 4> output; // = vld1q_f32(output_ptr);
@@ -128,14 +120,14 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
         int row5 = b_ptr[j + 4] >> 4;                                                                     \
         int row6 = b_ptr[j + 8] >> 4;                                                                     \
         int row7 = b_ptr[j + 12] >> 4;                                                                    \
-        output[j] += _a[a_register_idx1 * 4 + 0] * (static_cast<float>(row0) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 1] * (static_cast<float>(row1) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 2] * (static_cast<float>(row2) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 3] * (static_cast<float>(row3) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 0] * (static_cast<float>(row4) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 1] * (static_cast<float>(row5) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 2] * (static_cast<float>(row6) * scale[j] + zero_point[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 3] * (static_cast<float>(row7) * scale[j] + zero_point[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 0] * (static_cast<float>(row0) * scale[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 1] * (static_cast<float>(row1) * scale[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 2] * (static_cast<float>(row2) * scale[j]); \
+        output[j] += _a[a_register_idx1 * 4 + 3] * (static_cast<float>(row3) * scale[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 0] * (static_cast<float>(row4) * scale[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 1] * (static_cast<float>(row5) * scale[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 2] * (static_cast<float>(row6) * scale[j]); \
+        output[j] += _a[a_register_idx2 * 4 + 3] * (static_cast<float>(row7) * scale[j]); \
     }                                                                                                     \
     b_ptr += 16;
 

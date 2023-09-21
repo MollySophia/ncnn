@@ -38,7 +38,6 @@ public:
     int N;
     int K;
     Mat scales;
-    Mat zero_points;
     Mat BT_data;
     static const int KT = 16 * 4;
 };
