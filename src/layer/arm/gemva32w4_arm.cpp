@@ -20,27 +20,23 @@
 #include <cmath>
 #include <iostream>
 
+#include "cpu.h"
+
 namespace ncnn {
 
-static std::string float32x4_to_string(float32x4_t a)
+GemvA32W4_arm::GemvA32W4_arm()
 {
-    float* ptr = (float*)&a;
-    std::string str = "[";
-    for (int i = 0; i < 4; i++)
-    {
-        str += std::to_string(ptr[i]);
-        if (i != 3)
-        {
-            str += ", ";
-        }
-    }
-    str += "]";
-    return str;
+    support_fp16_arithmetic = cpu_support_arm_asimdhp();
 }
 
 int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
-    return forward_with_fp16(bottom_blobs, top_blobs, opt);
+#if NCNN_ARM82
+    if (support_fp16_arithmetic) {
+        return forward_with_fp16(bottom_blobs, top_blobs, opt);
+    }
+#endif
+    return -1;
     const Mat& A = bottom_blobs[0];
 
     size_t elemsize = A.elemsize;
@@ -49,8 +45,6 @@ int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat
     top_blob.create(N, elemsize, opt.blob_allocator);
     if (top_blob.empty())
         return -100;
-
-    std::cout << "nnnn" << std::endl;
 
     // A and B_data will both only be read once
     for (int k = 0; k < K; k += KT)

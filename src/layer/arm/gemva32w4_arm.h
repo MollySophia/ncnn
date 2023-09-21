@@ -22,10 +22,12 @@ namespace ncnn {
 class GemvA32W4_arm : virtual public GemvA32W4
 {
 public:
-    GemvA32W4_arm() = default;
+    GemvA32W4_arm();
 
     virtual int forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
     int forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
+private:
+    bool support_fp16_arithmetic;
 };
 
 } // namespace ncnn
