@@ -26,6 +26,7 @@ public:
 
     virtual int forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
     int forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const;
+
 private:
     bool support_fp16_arithmetic;
 };

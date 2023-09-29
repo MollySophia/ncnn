@@ -32,7 +32,8 @@ GemvA32W4_arm::GemvA32W4_arm()
 int GemvA32W4_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& top_blobs, const Option& opt) const
 {
 #if NCNN_ARM82
-    if (support_fp16_arithmetic) {
+    if (support_fp16_arithmetic)
+    {
         return forward_with_fp16(bottom_blobs, top_blobs, opt);
     }
 #endif
