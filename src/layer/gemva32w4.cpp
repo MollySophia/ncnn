@@ -40,9 +40,10 @@ int GemvA32W4::load_model(const ModelBin& mb)
         return -100;
     if (BT_data.elemsize != 1)
         return -99;
+
     // The frist 2 comes from a float32 contains two float16
     // The second 2 comes from a col contains two scales/zero_points
-    scales = mb.load(K / 2 * N / 64 * 2, 1);
+    scales = mb.load(K / 2 * N / 64 * kGroupNum, 1);
     if (scales.empty())
         return -100;
     return 0;
@@ -81,25 +82,30 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
 
         const int kBlockCols = 8;
 
-        #pragma omp parallel for num_threads(opt.num_threads)
+#pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += kBlockCols)
         {
-            // the offset is half of a32w8
             const int block_id = (k / KT) * (N / kBlockCols) + (i / kBlockCols);
             // the offset is half of a32w8
             const uint8_t* b_ptr = (const uint8_t*)BT_data + (block_id * KT * kBlockCols) / 2;
 
             // 64x8
 
-            std::array<float, kBlockCols> scale; // = vld1q_f32(&scales[block_id * 4]);
+            std::array<float, kBlockCols> scale0;
+            std::array<float, kBlockCols> scale1;
+            std::array<float, kBlockCols> scale2;
+            std::array<float, kBlockCols> scale3;
             for (int j = 0; j < kBlockCols; j++)
             {
-                scale[j] = scales[block_id * kBlockCols + j];
+                scale0[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + j]);
+                scale1[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols + j]);
+                scale2[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols * 2 + j]);
+                scale3[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols * 3 + j]);
             }
 
             float* output_ptr = (float*)top_blob + i;
-            std::array<float, 4> output; // = vld1q_f32(output_ptr);
-            for (int j = 0; j < 4; j++)
+            std::array<float, kBlockCols> output;
+            for (int j = 0; j < kBlockCols; j++)
             {
                 output[j] = output_ptr[j];
             }
@@ -109,41 +115,85 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
                 output.fill(0.f);
             }
 
-#define GEMV_KERNEL8x4(a_register_idx1, a_register_idx2)                                                  \
-    for (int j = 0; j < 4; j++)                                                                           \
-    {                                                                                                     \
-        int row0 = b_ptr[j + 0] & 15;                                                                     \
-        int row1 = b_ptr[j + 4] & 15;                                                                     \
-        int row2 = b_ptr[j + 8] & 15;                                                                     \
-        int row3 = b_ptr[j + 12] & 15;                                                                    \
-        int row4 = b_ptr[j + 0] >> 4;                                                                     \
-        int row5 = b_ptr[j + 4] >> 4;                                                                     \
-        int row6 = b_ptr[j + 8] >> 4;                                                                     \
-        int row7 = b_ptr[j + 12] >> 4;                                                                    \
-        output[j] += _a[a_register_idx1 * 4 + 0] * (static_cast<float>(row0) * scale[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 1] * (static_cast<float>(row1) * scale[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 2] * (static_cast<float>(row2) * scale[j]); \
-        output[j] += _a[a_register_idx1 * 4 + 3] * (static_cast<float>(row3) * scale[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 0] * (static_cast<float>(row4) * scale[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 1] * (static_cast<float>(row5) * scale[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 2] * (static_cast<float>(row6) * scale[j]); \
-        output[j] += _a[a_register_idx2 * 4 + 3] * (static_cast<float>(row7) * scale[j]); \
-    }                                                                                                     \
-    b_ptr += 16;
+            int8_t nf4_table[16];
+            nf4_table[0] = -127;
+            nf4_table[1] = -88;
+            nf4_table[2] = -67;
+            nf4_table[3] = -50;
+            nf4_table[4] = -36;
+            nf4_table[5] = -23;
+            nf4_table[6] = -12;
+            nf4_table[7] = 0;
+            nf4_table[8] = 10;
+            nf4_table[9] = 20;
+            nf4_table[10] = 31;
+            nf4_table[11] = 43;
+            nf4_table[12] = 56;
+            nf4_table[13] = 71;
+            nf4_table[14] = 92;
+            nf4_table[15] = 127;
 
-            GEMV_KERNEL8x4(0, 1);
+            // from arm neon to naive impl, we "unroll" the simd
+            // Example:
+            // neon:
+            // _b0 = vmulq_f16(_b0, scale##scale_idx);
+            // _b1 = vmulq_f16(_b1, scale##scale_idx);
+            // _b2 = vmulq_f16(_b2, scale##scale_idx);
+            // _b3 = vmulq_f16(_b3, scale##scale_idx);
+            //
+            // naive (note the for loop i from 0 to 8):
+            // for (int i = 0; i < 8; i++) {
+            //    _b0[i] = _b0[i] * scale##scale_idx;
+            //    _b1[i] = _b1[i] * scale##scale_idx;
+            //    _b2[i] = _b2[i] * scale##scale_idx;
+            //    _b3[i] = _b3[i] * scale##scale_idx;
+            // }
+#define GEMV_KERNEL8x8(a_register_idx1, scale_idx)                                   \
+    for (int j = 0; j < 8; j++)                                                      \
+    {                                                                                \
+        int row0 = b_ptr[j + 0] & 15;                                                \
+        int row1 = b_ptr[j + 8] & 15;                                                \
+        int row2 = b_ptr[j + 0] >> 4;                                                \
+        int row3 = b_ptr[j + 8] >> 4;                                                \
+        float dq_row0 = (static_cast<float>(nf4_table[row0]) * scale##scale_idx[j]); \
+        float dq_row1 = (static_cast<float>(nf4_table[row1]) * scale##scale_idx[j]); \
+        float dq_row2 = (static_cast<float>(nf4_table[row2]) * scale##scale_idx[j]); \
+        float dq_row3 = (static_cast<float>(nf4_table[row3]) * scale##scale_idx[j]); \
+        output[j] += _a[a_register_idx1 * 8 + 0] * dq_row0;                          \
+        output[j] += _a[a_register_idx1 * 8 + 1] * dq_row1;                          \
+        output[j] += _a[a_register_idx1 * 8 + 2] * dq_row2;                          \
+        output[j] += _a[a_register_idx1 * 8 + 3] * dq_row3;                          \
+    }                                                                                \
+    for (int j = 0; j < 8; j++)                                                      \
+    {                                                                                \
+        int row4 = b_ptr[j + 16 + 0] & 15;                                           \
+        int row5 = b_ptr[j + 16 + 8] & 15;                                           \
+        int row6 = b_ptr[j + 16 + 0] >> 4;                                           \
+        int row7 = b_ptr[j + 16 + 8] >> 4;                                           \
+        float dq_row4 = (static_cast<float>(nf4_table[row4]) * scale##scale_idx[j]); \
+        float dq_row5 = (static_cast<float>(nf4_table[row5]) * scale##scale_idx[j]); \
+        float dq_row6 = (static_cast<float>(nf4_table[row6]) * scale##scale_idx[j]); \
+        float dq_row7 = (static_cast<float>(nf4_table[row7]) * scale##scale_idx[j]); \
+        output[j] += _a[a_register_idx1 * 8 + 4] * dq_row4;                          \
+        output[j] += _a[a_register_idx1 * 8 + 5] * dq_row5;                          \
+        output[j] += _a[a_register_idx1 * 8 + 6] * dq_row6;                          \
+        output[j] += _a[a_register_idx1 * 8 + 7] * dq_row7;                          \
+    }                                                                                \
+    b_ptr += 32;
+
+            GEMV_KERNEL8x8(0, 0);
             assert((b_ptr - (const uint8_t*)BT_data) <= BT_data.total() * BT_data.elemsize);
-            GEMV_KERNEL8x4(2, 3);
-            GEMV_KERNEL8x4(4, 5);
-            GEMV_KERNEL8x4(6, 7);
-            GEMV_KERNEL8x4(8, 9);
-            GEMV_KERNEL8x4(10, 11);
-            GEMV_KERNEL8x4(12, 13);
-            GEMV_KERNEL8x4(14, 15);
+            GEMV_KERNEL8x8(1, 0);
+            GEMV_KERNEL8x8(2, 1);
+            GEMV_KERNEL8x8(3, 1);
+            GEMV_KERNEL8x8(4, 2);
+            GEMV_KERNEL8x8(5, 2);
+            GEMV_KERNEL8x8(6, 3);
+            GEMV_KERNEL8x8(7, 3);
 
-#undef GEMV_KERNEL8x4
+#undef GEMV_KERNEL8x8
 
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < 8; j++)
             {
                 output_ptr[j] = output[j];
             }

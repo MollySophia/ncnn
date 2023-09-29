@@ -40,6 +40,8 @@ public:
     Mat scales;
     Mat BT_data;
     static const int KT = 16 * 4;
+    static constexpr int kGroupSize = 16;
+    static constexpr int kGroupNum = 64 / kGroupSize;
 };
 
 } // namespace ncnn
