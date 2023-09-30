@@ -126,10 +126,21 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
 
             // 64x8 (KT*8)
 
-            const float16x8_t scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4);
-            const float16x8_t scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols);
-            const float16x8_t scale2 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 2);
-            const float16x8_t scale3 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 3);
+            float16x8_t scale0;
+            float16x8_t scale1;
+            float16x8_t scale2;
+            float16x8_t scale3;
+            if (group_num == 4) {
+                scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4);
+                scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols);
+                scale2 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 2);
+                scale3 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 3);
+            } else if (group_num == 2) {
+                scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2);
+                scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2 + kBlockCols);
+            } else {
+                assert(false);
+            }
 
             float* output_ptr = (float*)top_blob + i;
             float32x4_t output_low = vld1q_f32(output_ptr);
@@ -213,15 +224,25 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
                                                                          \
     b_ptr += 32;
 
-            GEMV_KERNEL8x8(0, 0);
-            GEMV_KERNEL8x8(1, 0);
-            GEMV_KERNEL8x8(2, 1);
-            GEMV_KERNEL8x8(3, 1);
-            GEMV_KERNEL8x8(4, 2);
-            GEMV_KERNEL8x8(5, 2);
-            GEMV_KERNEL8x8(6, 3);
-            GEMV_KERNEL8x8(7, 3);
-
+            if (group_num == 4) {
+                GEMV_KERNEL8x8(0, 0);
+                GEMV_KERNEL8x8(1, 0);
+                GEMV_KERNEL8x8(2, 1);
+                GEMV_KERNEL8x8(3, 1);
+                GEMV_KERNEL8x8(4, 2);
+                GEMV_KERNEL8x8(5, 2);
+                GEMV_KERNEL8x8(6, 3);
+                GEMV_KERNEL8x8(7, 3);
+            } else {
+                GEMV_KERNEL8x8(0, 0);
+                GEMV_KERNEL8x8(1, 0);
+                GEMV_KERNEL8x8(2, 0);
+                GEMV_KERNEL8x8(3, 0);
+                GEMV_KERNEL8x8(4, 1);
+                GEMV_KERNEL8x8(5, 1);
+                GEMV_KERNEL8x8(6, 1);
+                GEMV_KERNEL8x8(7, 1);
+            }
 #undef GEMV_KERNEL8x8
 
             if (k == 0)
