@@ -30,6 +30,9 @@ int GemvA32W4::load_param(const ParamDict& pd)
 {
     N = pd.get(0, 0);
     K = pd.get(1, 0);
+    group_size = pd.get(11, 32);
+    assert(64 % group_size == 0);
+    group_num = 64 / group_size;
     return 0;
 }
 
@@ -43,7 +46,7 @@ int GemvA32W4::load_model(const ModelBin& mb)
 
     // The frist 2 comes from a float32 contains two float16
     // The second 2 comes from a col contains two scales/zero_points
-    scales = mb.load(K / 2 * N / 64 * kGroupNum, 1);
+    scales = mb.load(K / 2 * N / 64 * group_num, 1);
     if (scales.empty())
         return -100;
     return 0;
@@ -91,16 +94,14 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
 
             // 64x8
 
-            std::array<float, kBlockCols> scale0;
-            std::array<float, kBlockCols> scale1;
-            std::array<float, kBlockCols> scale2;
-            std::array<float, kBlockCols> scale3;
+            std::vector<std::array<float, kBlockCols>> scales_vec;
+            scales_vec.resize(group_num);
             for (int j = 0; j < kBlockCols; j++)
             {
-                scale0[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + j]);
-                scale1[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols + j]);
-                scale2[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols * 2 + j]);
-                scale3[j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * kGroupNum + kBlockCols * 3 + j]);
+                for (int k = 0; k < group_num; k++)
+                {
+                    scales_vec[k][j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j]);
+                }
             }
 
             float* output_ptr = (float*)top_blob + i;
@@ -148,17 +149,18 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             //    _b2[i] = _b2[i] * scale##scale_idx;
             //    _b3[i] = _b3[i] * scale##scale_idx;
             // }
-#define GEMV_KERNEL8x8(a_register_idx1, scale_idx)                                   \
+            int tmp = 8 / group_num;
+#define GEMV_KERNEL8x8(a_register_idx1)                                   \
     for (int j = 0; j < 8; j++)                                                      \
     {                                                                                \
         int row0 = b_ptr[j + 0] & 15;                                                \
         int row1 = b_ptr[j + 8] & 15;                                                \
         int row2 = b_ptr[j + 0] >> 4;                                                \
         int row3 = b_ptr[j + 8] >> 4;                                                \
-        float dq_row0 = (static_cast<float>(nf4_table[row0]) * scale##scale_idx[j]); \
-        float dq_row1 = (static_cast<float>(nf4_table[row1]) * scale##scale_idx[j]); \
-        float dq_row2 = (static_cast<float>(nf4_table[row2]) * scale##scale_idx[j]); \
-        float dq_row3 = (static_cast<float>(nf4_table[row3]) * scale##scale_idx[j]); \
+        float dq_row0 = (static_cast<float>(nf4_table[row0]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row1 = (static_cast<float>(nf4_table[row1]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row2 = (static_cast<float>(nf4_table[row2]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row3 = (static_cast<float>(nf4_table[row3]) * scales_vec[a_register_idx1 / tmp][j]); \
         output[j] += _a[a_register_idx1 * 8 + 0] * dq_row0;                          \
         output[j] += _a[a_register_idx1 * 8 + 1] * dq_row1;                          \
         output[j] += _a[a_register_idx1 * 8 + 2] * dq_row2;                          \
@@ -170,10 +172,10 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
         int row5 = b_ptr[j + 16 + 8] & 15;                                           \
         int row6 = b_ptr[j + 16 + 0] >> 4;                                           \
         int row7 = b_ptr[j + 16 + 8] >> 4;                                           \
-        float dq_row4 = (static_cast<float>(nf4_table[row4]) * scale##scale_idx[j]); \
-        float dq_row5 = (static_cast<float>(nf4_table[row5]) * scale##scale_idx[j]); \
-        float dq_row6 = (static_cast<float>(nf4_table[row6]) * scale##scale_idx[j]); \
-        float dq_row7 = (static_cast<float>(nf4_table[row7]) * scale##scale_idx[j]); \
+        float dq_row4 = (static_cast<float>(nf4_table[row4]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row5 = (static_cast<float>(nf4_table[row5]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row6 = (static_cast<float>(nf4_table[row6]) * scales_vec[a_register_idx1 / tmp][j]); \
+        float dq_row7 = (static_cast<float>(nf4_table[row7]) * scales_vec[a_register_idx1 / tmp][j]); \
         output[j] += _a[a_register_idx1 * 8 + 4] * dq_row4;                          \
         output[j] += _a[a_register_idx1 * 8 + 5] * dq_row5;                          \
         output[j] += _a[a_register_idx1 * 8 + 6] * dq_row6;                          \
@@ -181,15 +183,15 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
     }                                                                                \
     b_ptr += 32;
 
-            GEMV_KERNEL8x8(0, 0);
+            GEMV_KERNEL8x8(0);
             assert((b_ptr - (const uint8_t*)BT_data) <= BT_data.total() * BT_data.elemsize);
-            GEMV_KERNEL8x8(1, 0);
-            GEMV_KERNEL8x8(2, 1);
-            GEMV_KERNEL8x8(3, 1);
-            GEMV_KERNEL8x8(4, 2);
-            GEMV_KERNEL8x8(5, 2);
-            GEMV_KERNEL8x8(6, 3);
-            GEMV_KERNEL8x8(7, 3);
+            GEMV_KERNEL8x8(1);
+            GEMV_KERNEL8x8(2);
+            GEMV_KERNEL8x8(3);
+            GEMV_KERNEL8x8(4);
+            GEMV_KERNEL8x8(5);
+            GEMV_KERNEL8x8(6);
+            GEMV_KERNEL8x8(7);
 
 #undef GEMV_KERNEL8x8
 
