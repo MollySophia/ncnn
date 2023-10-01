@@ -30,9 +30,12 @@ int GemvA32W4::load_param(const ParamDict& pd)
 {
     N = pd.get(0, 0);
     K = pd.get(1, 0);
+    // 32, 16 and 8 (recommended) are supported
     group_size = pd.get(11, 32);
     assert(64 % group_size == 0);
     group_num = 64 / group_size;
+    // 0 means no double quant
+    double_quant_group_size = pd.get(22, 0);
     return 0;
 }
 
@@ -44,12 +47,20 @@ int GemvA32W4::load_model(const ModelBin& mb)
     if (BT_data.elemsize != 1)
         return -99;
 
-    // The 4 comes from a float32 contains four int8
-    scales = mb.load(K / 4 * N / 64 * group_num, 1);
-    if (scales.empty())
-        return -100;
-    // every 16 scales has a dq_scale, dq_scale is float16
-    dq_scales = mb.load(scales.total() * 4 / 16 / 2, 1);
+    // double quant is enabled
+    if (double_quant_group_size > 0) {
+        // The 4 comes from a float32 contains four int8
+        scales = mb.load(K / 4 * N / 64 * group_num, 1);
+        if (scales.empty())
+            return -100;
+        // every 16 scales has a dq_scale, dq_scale is float16
+        dq_scales = mb.load(scales.total() * 4 / double_quant_group_size / 2, 1);
+    } else {
+        // The 4 comes from a float32 contains two float16
+        scales = mb.load(K / 2 * N / 64 * group_num, 1);
+        if (scales.empty())
+            return -100;
+    }
     return 0;
 }
 
@@ -99,24 +110,19 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             scales_vec.resize(group_num);
             for (int j = 0; j < kBlockCols; j++)
             {
-                float dq_scale = float16_to_float32(static_cast<const unsigned short*>(dq_scales)[block_id / 2 * kBlockCols + j]);
-                // if (block_id == 56 || block_id == 57) {
-                //     std::cout << "dq_scale[" << block_id / 2 * kBlockCols + j << "] = " << dq_scale << std::endl;
-                // }
-                // 2 comes from 16 (dq_scale_group_size) / 8 (kBlockCols)
-                // a.k.a. 2 blocks share one dq_scale
-                for (int k = 0; k < group_num; k++)
-                {
-                    scales_vec[k][j] = static_cast<const int8_t*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j] * dq_scale;
-                    // if (block_id == 56 || block_id == 57) {
-                    //     std::cout << "scales[" << (block_id * kBlockCols * group_num + kBlockCols * k + j) << "] = " << scales_vec[k][j] << std::endl;
-                    // }
-                    // scales_vec[k][j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j]);
+                if (double_quant_group_size > 0) {
+                    float dq_scale = float16_to_float32(static_cast<const unsigned short*>(dq_scales)[block_id / (double_quant_group_size / 8) * kBlockCols + j]);
+                    for (int k = 0; k < group_num; k++)
+                    {
+                        scales_vec[k][j] = static_cast<const int8_t*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j] * dq_scale;
+                    }
+                } else {
+                    for (int k = 0; k < group_num; k++)
+                    {
+                        scales_vec[k][j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j]);
+                    }
                 }
             }
-            // if (block_id == 57) {
-            //     exit(0);
-            // }
 
             float* output_ptr = (float*)top_blob + i;
             std::array<float, kBlockCols> output;

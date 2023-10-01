@@ -43,6 +43,7 @@ public:
     static const int KT = 16 * 4;
     int group_size;
     int group_num;
+    int double_quant_group_size;
     // static constexpr int kGroupSize = 16;
     // static constexpr int kGroupNum = 64 / kGroupSize;
 };

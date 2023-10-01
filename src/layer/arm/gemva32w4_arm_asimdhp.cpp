@@ -117,7 +117,7 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
 
         const int kBlockCols = 8;
 
-        #pragma omp parallel for num_threads(opt.num_threads)
+#pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += kBlockCols)
         {
             const int block_id = (k / KT) * (N / kBlockCols) + (i / kBlockCols);
@@ -130,12 +130,38 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
             float16x8_t scale1;
             float16x8_t scale2;
             float16x8_t scale3;
-            if (group_num == 4) {
+            float16x8_t scale4;
+            float16x8_t scale5;
+            float16x8_t scale6;
+            float16x8_t scale7;
+            if (group_num == 8)
+            {
+                assert(double_quant_group_size > 0);
+                float16x8_t dq_scale = vld1q_f16(static_cast<const float16_t*>(dq_scales) + block_id / (double_quant_group_size / group_num) * kBlockCols);
+                int8x16_t scale01 = vld1q_s8(static_cast<const int8_t*>(scales) + block_id * kBlockCols * 8);
+                int8x16_t scale23 = vld1q_s8(static_cast<const int8_t*>(scales) + block_id * kBlockCols * 8 + kBlockCols * 2);
+                int8x16_t scale45 = vld1q_s8(static_cast<const int8_t*>(scales) + block_id * kBlockCols * 8 + kBlockCols * 4);
+                int8x16_t scale67 = vld1q_s8(static_cast<const int8_t*>(scales) + block_id * kBlockCols * 8 + kBlockCols * 6);
+                scale0 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_low_s8(scale01))), dq_scale);
+                scale1 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_high_s8(scale01))), dq_scale);
+                scale2 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_low_s8(scale23))), dq_scale);
+                scale3 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_high_s8(scale23))), dq_scale);
+                scale4 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_low_s8(scale45))), dq_scale);
+                scale5 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_high_s8(scale45))), dq_scale);
+                scale6 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_low_s8(scale67))), dq_scale);
+                scale7 = vmulq_f16(vcvtq_f16_s16(vmovl_s8(vget_high_s8(scale67))), dq_scale);
+            }
+            else if (group_num == 4)
+            {
+                assert(double_quant_group_size == 0);
                 scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4);
                 scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols);
                 scale2 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 2);
                 scale3 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 4 + kBlockCols * 3);
-            } else if (group_num == 2) {
+            }
+            else if (group_num == 2)
+            {
+                assert(double_quant_group_size == 0);
                 scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2);
                 scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2 + kBlockCols);
             } else {
@@ -224,7 +250,19 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
                                                                          \
     b_ptr += 32;
 
-            if (group_num == 4) {
+            if (group_num == 8)
+            {
+                GEMV_KERNEL8x8(0, 0);
+                GEMV_KERNEL8x8(1, 1);
+                GEMV_KERNEL8x8(2, 2);
+                GEMV_KERNEL8x8(3, 3);
+                GEMV_KERNEL8x8(4, 4);
+                GEMV_KERNEL8x8(5, 5);
+                GEMV_KERNEL8x8(6, 6);
+                GEMV_KERNEL8x8(7, 7);
+            }
+            else if (group_num == 4)
+            {
                 GEMV_KERNEL8x8(0, 0);
                 GEMV_KERNEL8x8(1, 0);
                 GEMV_KERNEL8x8(2, 1);
