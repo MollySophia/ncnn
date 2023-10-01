@@ -38,6 +38,7 @@ public:
     int N;
     int K;
     Mat scales;
+    Mat dq_scales;
     Mat BT_data;
     static const int KT = 16 * 4;
     int group_size;
