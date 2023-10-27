@@ -1,0 +1,88 @@
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+#define LOCAL_MEMORY_UNROLL_INCH 8
+
+layout (constant_id = 0) const int M = 0;
+layout (constant_id = 0) const int N = 0;
+layout (constant_id = 1) const int K = 0;
+
+// TODO psc more
+
+layout (binding = 0) writeonly buffer top_blob { sfp top_blob_data[]; };
+layout (binding = 1) readonly buffer A_blob { sfp A_blob_data[]; };
+layout (binding = 2) readonly buffer B_blob { sfp B_blob_data[]; };
+
+layout (push_constant) uniform parameter
+{
+    int A_dims;
+} p;
+
+void main()
+{
+    // A: (M, K), (1, K)
+    // B: (K, N)
+    // Out: (M, N), (1, N)
+
+    const int kSplitKPieceSize = 8;
+
+    int gx = int(gl_GlobalInvocationID.x);
+    int start_k = int(gl_GlobalInvocationID.y) * kSplitKPieceSize;
+    int gz = int(gl_GlobalInvocationID.z);
+
+    if (gx >= N || start_k >= K || gz >= 1)
+        return;
+
+    int end_k = min(start_k + kSplitKPieceSize, K);
+    afp sum = afp(0.f);
+    for (int k = start_k; k < end_k; k++)
+    {
+        afp a = buffer_ld1(A_blob_data, k);
+        afp b = buffer_ld1(B_blob_data, k * N + gx);
+        sum += a * b;
+    }
+    atomicAdd(top_blob_data + gx, sum);
+
+    // afp sum0 = afp(0.f);
+    // afp sum1 = afp(0.f);
+    // afp sum2 = afp(0.f);
+    // afp sum3 = afp(0.f);
+
+    // for (int k = 0; k < K; k++)
+    // {
+    //     afp a0;
+    //     afp a1;
+    //     afp b0;
+    //     afp b1;
+
+    //     const int ai = gy * p.A_hstep + k;
+    //     a0 = buffer_ld1(A_blob_data, ai);
+    //     a1 = buffer_ld1(A_blob_data, ai + p.A_hstep);
+
+    //     const int bi = k * p.B_hstep + gx;
+    //     b0 = buffer_ld1(B_blob_data, bi);
+    //     b1 = buffer_ld1(B_blob_data, bi + 1);
+
+    //     sum0 += a0 * b0;
+    //     sum1 += a0 * b1;
+    //     sum2 += a1 * b0;
+    //     sum3 += a1 * b1;
+    // }
+
+    // const int gi = gy * p.outhstep + gx;
+
+    // buffer_st1(top_blob_data, gi, sum0);
+    // if (gx + 1 < N) buffer_st1(top_blob_data, gi + 1, sum1);
+    // if (gy + 1 < M)
+    // {
+    //     buffer_st1(top_blob_data, gi + p.outhstep, sum2);
+    //     if (gx + 1 < N) buffer_st1(top_blob_data, gi + p.outhstep + 1, sum3);
+    // }
+}
+
