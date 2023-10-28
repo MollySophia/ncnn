@@ -119,4 +119,3 @@ int Gemv_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& c
 }
 
 } // namespace ncnn
-
