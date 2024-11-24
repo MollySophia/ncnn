@@ -28,7 +28,6 @@ Gemv_vulkan::Gemv_vulkan()
 
 int Gemv_vulkan::create_pipeline(const Option& opt)
 {
-
     std::vector<vk_specialization_type> specializations(3);
     specializations[0].i = M;
     specializations[1].i = N;

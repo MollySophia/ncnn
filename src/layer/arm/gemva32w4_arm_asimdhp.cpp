@@ -117,7 +117,7 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
 
         const int kBlockCols = 8;
 
-#pragma omp parallel for num_threads(opt.num_threads)
+        #pragma omp parallel for num_threads(opt.num_threads)
         for (int i = 0; i < N; i += kBlockCols)
         {
             const int block_id = (k / KT) * (N / kBlockCols) + (i / kBlockCols);
@@ -164,7 +164,9 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
                 assert(double_quant_group_size == 0);
                 scale0 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2);
                 scale1 = vld1q_f16(static_cast<const float16_t*>(scales) + block_id * kBlockCols * 2 + kBlockCols);
-            } else {
+            }
+            else
+            {
                 assert(false);
             }
 
@@ -271,7 +273,9 @@ int GemvA32W4_arm::forward_with_fp16(const std::vector<Mat>& bottom_blobs, std::
                 GEMV_KERNEL8x8(5, 2);
                 GEMV_KERNEL8x8(6, 3);
                 GEMV_KERNEL8x8(7, 3);
-            } else {
+            }
+            else
+            {
                 GEMV_KERNEL8x8(0, 0);
                 GEMV_KERNEL8x8(1, 0);
                 GEMV_KERNEL8x8(2, 0);

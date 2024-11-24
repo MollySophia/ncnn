@@ -48,14 +48,17 @@ int GemvA32W4::load_model(const ModelBin& mb)
         return -99;
 
     // double quant is enabled
-    if (double_quant_group_size > 0) {
+    if (double_quant_group_size > 0)
+    {
         // The 4 comes from a float32 contains four int8
         scales = mb.load(K / 4 * N / 64 * group_num, 1);
         if (scales.empty())
             return -100;
         // every 16 scales has a dq_scale, dq_scale is float16
         dq_scales = mb.load(scales.total() * 4 / double_quant_group_size / 2, 1);
-    } else {
+    }
+    else
+    {
         // The 4 comes from a float32 contains two float16
         scales = mb.load(K / 2 * N / 64 * group_num, 1);
         if (scales.empty())
@@ -106,17 +109,20 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
 
             // 64x8
 
-            std::vector<std::array<float, kBlockCols>> scales_vec;
+            std::vector<std::array<float, kBlockCols> > scales_vec;
             scales_vec.resize(group_num);
             for (int j = 0; j < kBlockCols; j++)
             {
-                if (double_quant_group_size > 0) {
+                if (double_quant_group_size > 0)
+                {
                     float dq_scale = float16_to_float32(static_cast<const unsigned short*>(dq_scales)[block_id / (double_quant_group_size / 8) * kBlockCols + j]);
                     for (int k = 0; k < group_num; k++)
                     {
                         scales_vec[k][j] = static_cast<const int8_t*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j] * dq_scale;
                     }
-                } else {
+                }
+                else
+                {
                     for (int k = 0; k < group_num; k++)
                     {
                         scales_vec[k][j] = float16_to_float32(static_cast<const unsigned short*>(scales)[block_id * kBlockCols * group_num + kBlockCols * k + j]);
@@ -170,37 +176,37 @@ int GemvA32W4::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& t
             //    _b3[i] = _b3[i] * scale##scale_idx;
             // }
             int tmp = 8 / group_num;
-#define GEMV_KERNEL8x8(a_register_idx1)                                   \
-    for (int j = 0; j < 8; j++)                                                      \
-    {                                                                                \
-        int row0 = b_ptr[j + 0] & 15;                                                \
-        int row1 = b_ptr[j + 8] & 15;                                                \
-        int row2 = b_ptr[j + 0] >> 4;                                                \
-        int row3 = b_ptr[j + 8] >> 4;                                                \
+#define GEMV_KERNEL8x8(a_register_idx1)                                                               \
+    for (int j = 0; j < 8; j++)                                                                       \
+    {                                                                                                 \
+        int row0 = b_ptr[j + 0] & 15;                                                                 \
+        int row1 = b_ptr[j + 8] & 15;                                                                 \
+        int row2 = b_ptr[j + 0] >> 4;                                                                 \
+        int row3 = b_ptr[j + 8] >> 4;                                                                 \
         float dq_row0 = (static_cast<float>(nf4_table[row0]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row1 = (static_cast<float>(nf4_table[row1]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row2 = (static_cast<float>(nf4_table[row2]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row3 = (static_cast<float>(nf4_table[row3]) * scales_vec[a_register_idx1 / tmp][j]); \
-        output[j] += _a[a_register_idx1 * 8 + 0] * dq_row0;                          \
-        output[j] += _a[a_register_idx1 * 8 + 1] * dq_row1;                          \
-        output[j] += _a[a_register_idx1 * 8 + 2] * dq_row2;                          \
-        output[j] += _a[a_register_idx1 * 8 + 3] * dq_row3;                          \
-    }                                                                                \
-    for (int j = 0; j < 8; j++)                                                      \
-    {                                                                                \
-        int row4 = b_ptr[j + 16 + 0] & 15;                                           \
-        int row5 = b_ptr[j + 16 + 8] & 15;                                           \
-        int row6 = b_ptr[j + 16 + 0] >> 4;                                           \
-        int row7 = b_ptr[j + 16 + 8] >> 4;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 0] * dq_row0;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 1] * dq_row1;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 2] * dq_row2;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 3] * dq_row3;                                           \
+    }                                                                                                 \
+    for (int j = 0; j < 8; j++)                                                                       \
+    {                                                                                                 \
+        int row4 = b_ptr[j + 16 + 0] & 15;                                                            \
+        int row5 = b_ptr[j + 16 + 8] & 15;                                                            \
+        int row6 = b_ptr[j + 16 + 0] >> 4;                                                            \
+        int row7 = b_ptr[j + 16 + 8] >> 4;                                                            \
         float dq_row4 = (static_cast<float>(nf4_table[row4]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row5 = (static_cast<float>(nf4_table[row5]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row6 = (static_cast<float>(nf4_table[row6]) * scales_vec[a_register_idx1 / tmp][j]); \
         float dq_row7 = (static_cast<float>(nf4_table[row7]) * scales_vec[a_register_idx1 / tmp][j]); \
-        output[j] += _a[a_register_idx1 * 8 + 4] * dq_row4;                          \
-        output[j] += _a[a_register_idx1 * 8 + 5] * dq_row5;                          \
-        output[j] += _a[a_register_idx1 * 8 + 6] * dq_row6;                          \
-        output[j] += _a[a_register_idx1 * 8 + 7] * dq_row7;                          \
-    }                                                                                \
+        output[j] += _a[a_register_idx1 * 8 + 4] * dq_row4;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 5] * dq_row5;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 6] * dq_row6;                                           \
+        output[j] += _a[a_register_idx1 * 8 + 7] * dq_row7;                                           \
+    }                                                                                                 \
     b_ptr += 32;
 
             GEMV_KERNEL8x8(0);
