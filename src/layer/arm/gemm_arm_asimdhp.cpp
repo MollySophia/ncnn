@@ -2995,7 +2995,238 @@ int Gemm_arm::forward_fp16sa(const std::vector<Mat>& bottom_blobs, std::vector<M
     else if (constantB)
     {
         const Mat& A = bottom_blobs[0];
-        ret = gemm_BT_arm_fp16sa(A, BT_data, C, top_blob, broadcast_type_C, constantN, constantK, transA, output_transpose, constant_TILE_M, constant_TILE_N, constant_TILE_K, _nT, opt);
+
+        // Fast M=1 GEMV using BT_data tiled layout with fp32 accumulation.
+        if (M == 1 && !transA && !output_transpose && !output_N1M && alpha == 1.f && constant_broadcast_type_C == -1)
+        {
+            const int N = constantN;
+            const int K = constantK;
+
+            // Keep input as fp32
+            Mat A_fp32;
+            if (A.elembits() == 32)
+                A_fp32 = A;
+            else
+            {
+                cast_float16_to_float32(A, A_fp32, opt);
+                if (A_fp32.empty())
+                    return -100;
+            }
+
+            Mat A_unpacked;
+            if (A_fp32.elempack != 1)
+            {
+                convert_packing(A_fp32, A_unpacked, 1, opt);
+                if (A_unpacked.empty())
+                    return -100;
+            }
+            else
+                A_unpacked = A_fp32;
+
+            const float* sptr = (const float*)A_unpacked;
+
+            top_blob.create(N, 1, 2u, 1, opt.blob_allocator);
+            if (top_blob.empty())
+                return -100;
+            __fp16* outptr = (__fp16*)top_blob;
+
+            // Recompute tile sizes (same as create_pipeline used with M=0)
+            int TILE_M, TILE_N, TILE_K;
+            get_optimal_tile_mnk_fp16sa(0, N, K, constant_TILE_M, constant_TILE_N, constant_TILE_K, TILE_M, TILE_N, TILE_K, _nT);
+
+            const int nn_N = (N + TILE_N - 1) / TILE_N;
+
+            #pragma omp parallel for num_threads(opt.num_threads)
+            for (int ppj = 0; ppj < nn_N; ppj++)
+            {
+                const int j = ppj * TILE_N;
+                const int max_jj = std::min((N - j), TILE_N);
+
+                int jj = 0;
+#if __aarch64__
+                for (; jj + 11 < max_jj; jj += 12)
+                {
+                    float32x4_t _sum0 = vdupq_n_f32(0.f);
+                    float32x4_t _sum1 = vdupq_n_f32(0.f);
+                    float32x4_t _sum2 = vdupq_n_f32(0.f);
+
+                    for (int k = 0; k < K; k += TILE_K)
+                    {
+                        const int max_kk = std::min((K - k), TILE_K);
+                        const __fp16* pBj = (const __fp16*)BT_data.channel(j / TILE_N).row((size_t)(k / TILE_K)) + jj * max_kk;
+
+                        int kk = 0;
+                        for (; kk + 3 < max_kk; kk += 4)
+                        {
+                            float32x4_t _v0 = vdupq_n_f32(sptr[k + kk + 0]);
+                            float32x4_t _v1 = vdupq_n_f32(sptr[k + kk + 1]);
+                            float32x4_t _v2 = vdupq_n_f32(sptr[k + kk + 2]);
+                            float32x4_t _v3 = vdupq_n_f32(sptr[k + kk + 3]);
+
+                            float16x8_t _w01 = vld1q_f16(pBj);
+                            float16x4_t _w2 = vld1_f16(pBj + 8);
+                            _sum0 = vfmaq_f32(_sum0, _v0, vcvt_f32_f16(vget_low_f16(_w01)));
+                            _sum1 = vfmaq_f32(_sum1, _v0, vcvt_f32_f16(vget_high_f16(_w01)));
+                            _sum2 = vfmaq_f32(_sum2, _v0, vcvt_f32_f16(_w2));
+
+                            _w01 = vld1q_f16(pBj + 12);
+                            _w2 = vld1_f16(pBj + 20);
+                            _sum0 = vfmaq_f32(_sum0, _v1, vcvt_f32_f16(vget_low_f16(_w01)));
+                            _sum1 = vfmaq_f32(_sum1, _v1, vcvt_f32_f16(vget_high_f16(_w01)));
+                            _sum2 = vfmaq_f32(_sum2, _v1, vcvt_f32_f16(_w2));
+
+                            _w01 = vld1q_f16(pBj + 24);
+                            _w2 = vld1_f16(pBj + 32);
+                            _sum0 = vfmaq_f32(_sum0, _v2, vcvt_f32_f16(vget_low_f16(_w01)));
+                            _sum1 = vfmaq_f32(_sum1, _v2, vcvt_f32_f16(vget_high_f16(_w01)));
+                            _sum2 = vfmaq_f32(_sum2, _v2, vcvt_f32_f16(_w2));
+
+                            _w01 = vld1q_f16(pBj + 36);
+                            _w2 = vld1_f16(pBj + 44);
+                            _sum0 = vfmaq_f32(_sum0, _v3, vcvt_f32_f16(vget_low_f16(_w01)));
+                            _sum1 = vfmaq_f32(_sum1, _v3, vcvt_f32_f16(vget_high_f16(_w01)));
+                            _sum2 = vfmaq_f32(_sum2, _v3, vcvt_f32_f16(_w2));
+
+                            pBj += 48;
+                        }
+                        for (; kk < max_kk; kk++)
+                        {
+                            float32x4_t _v = vdupq_n_f32(sptr[k + kk]);
+                            float16x8_t _w01 = vld1q_f16(pBj);
+                            float16x4_t _w2 = vld1_f16(pBj + 8);
+                            _sum0 = vfmaq_f32(_sum0, _v, vcvt_f32_f16(vget_low_f16(_w01)));
+                            _sum1 = vfmaq_f32(_sum1, _v, vcvt_f32_f16(vget_high_f16(_w01)));
+                            _sum2 = vfmaq_f32(_sum2, _v, vcvt_f32_f16(_w2));
+                            pBj += 12;
+                        }
+                    }
+
+                    vst1_f16(outptr + j + jj, vcvt_f16_f32(_sum0));
+                    vst1_f16(outptr + j + jj + 4, vcvt_f16_f32(_sum1));
+                    vst1_f16(outptr + j + jj + 8, vcvt_f16_f32(_sum2));
+                }
+#endif // __aarch64__
+                for (; jj + 7 < max_jj; jj += 8)
+                {
+                    float32x4_t _sum0 = vdupq_n_f32(0.f);
+                    float32x4_t _sum1 = vdupq_n_f32(0.f);
+                    float32x4_t _sum2 = vdupq_n_f32(0.f);
+                    float32x4_t _sum3 = vdupq_n_f32(0.f);
+
+                    for (int k = 0; k < K; k += TILE_K)
+                    {
+                        const int max_kk = std::min((K - k), TILE_K);
+                        const __fp16* pBj = (const __fp16*)BT_data.channel(j / TILE_N).row((size_t)(k / TILE_K)) + jj * max_kk;
+
+                        int kk = 0;
+                        for (; kk + 3 < max_kk; kk += 4)
+                        {
+                            float32x4_t _v0 = vdupq_n_f32(sptr[k + kk + 0]);
+                            float32x4_t _v1 = vdupq_n_f32(sptr[k + kk + 1]);
+                            float32x4_t _v2 = vdupq_n_f32(sptr[k + kk + 2]);
+                            float32x4_t _v3 = vdupq_n_f32(sptr[k + kk + 3]);
+
+                            float16x8_t _w0 = vld1q_f16(pBj);
+                            float16x8_t _w1 = vld1q_f16(pBj + 8);
+                            float16x8_t _w2 = vld1q_f16(pBj + 16);
+                            float16x8_t _w3 = vld1q_f16(pBj + 24);
+
+                            _sum0 = vfmaq_f32(_sum0, _v0, vcvt_f32_f16(vget_low_f16(_w0)));
+                            _sum1 = vfmaq_f32(_sum1, _v0, vcvt_f32_f16(vget_high_f16(_w0)));
+                            _sum2 = vfmaq_f32(_sum2, _v1, vcvt_f32_f16(vget_low_f16(_w1)));
+                            _sum3 = vfmaq_f32(_sum3, _v1, vcvt_f32_f16(vget_high_f16(_w1)));
+                            _sum0 = vfmaq_f32(_sum0, _v2, vcvt_f32_f16(vget_low_f16(_w2)));
+                            _sum1 = vfmaq_f32(_sum1, _v2, vcvt_f32_f16(vget_high_f16(_w2)));
+                            _sum2 = vfmaq_f32(_sum2, _v3, vcvt_f32_f16(vget_low_f16(_w3)));
+                            _sum3 = vfmaq_f32(_sum3, _v3, vcvt_f32_f16(vget_high_f16(_w3)));
+
+                            pBj += 32;
+                        }
+                        for (; kk < max_kk; kk++)
+                        {
+                            float32x4_t _v = vdupq_n_f32(sptr[k + kk]);
+                            float16x8_t _w = vld1q_f16(pBj);
+                            _sum0 = vfmaq_f32(_sum0, _v, vcvt_f32_f16(vget_low_f16(_w)));
+                            _sum1 = vfmaq_f32(_sum1, _v, vcvt_f32_f16(vget_high_f16(_w)));
+                            pBj += 8;
+                        }
+                    }
+
+                    _sum0 = vaddq_f32(_sum0, _sum2);
+                    _sum1 = vaddq_f32(_sum1, _sum3);
+
+                    vst1_f16(outptr + j + jj, vcvt_f16_f32(_sum0));
+                    vst1_f16(outptr + j + jj + 4, vcvt_f16_f32(_sum1));
+                }
+                for (; jj + 3 < max_jj; jj += 4)
+                {
+                    float32x4_t _sum0 = vdupq_n_f32(0.f);
+
+                    for (int k = 0; k < K; k += TILE_K)
+                    {
+                        const int max_kk = std::min((K - k), TILE_K);
+                        const __fp16* pBj = (const __fp16*)BT_data.channel(j / TILE_N).row((size_t)(k / TILE_K)) + jj * max_kk;
+
+                        for (int kk = 0; kk < max_kk; kk++)
+                        {
+                            float32x4_t _v = vdupq_n_f32(sptr[k + kk]);
+                            float16x4_t _w = vld1_f16(pBj);
+                            _sum0 = vfmaq_f32(_sum0, _v, vcvt_f32_f16(_w));
+                            pBj += 4;
+                        }
+                    }
+
+                    vst1_f16(outptr + j + jj, vcvt_f16_f32(_sum0));
+                }
+                for (; jj + 1 < max_jj; jj += 2)
+                {
+                    float sum0 = 0.f;
+                    float sum1 = 0.f;
+
+                    for (int k = 0; k < K; k += TILE_K)
+                    {
+                        const int max_kk = std::min((K - k), TILE_K);
+                        const __fp16* pBj = (const __fp16*)BT_data.channel(j / TILE_N).row((size_t)(k / TILE_K)) + jj * max_kk;
+
+                        for (int kk = 0; kk < max_kk; kk++)
+                        {
+                            float v = sptr[k + kk];
+                            sum0 += v * (float)pBj[0];
+                            sum1 += v * (float)pBj[1];
+                            pBj += 2;
+                        }
+                    }
+
+                    outptr[j + jj] = (__fp16)sum0;
+                    outptr[j + jj + 1] = (__fp16)sum1;
+                }
+                for (; jj < max_jj; jj++)
+                {
+                    float sum = 0.f;
+
+                    for (int k = 0; k < K; k += TILE_K)
+                    {
+                        const int max_kk = std::min((K - k), TILE_K);
+                        const __fp16* pBj = (const __fp16*)BT_data.channel(j / TILE_N).row((size_t)(k / TILE_K)) + jj * max_kk;
+
+                        for (int kk = 0; kk < max_kk; kk++)
+                        {
+                            sum += sptr[k + kk] * (float)pBj[0];
+                            pBj += 1;
+                        }
+                    }
+
+                    outptr[j + jj] = (__fp16)sum;
+                }
+            }
+
+            ret = 0;
+        }
+        else
+        {
+            // Fallback: use tiled Gemm path
+            ret = gemm_BT_arm_fp16sa(A, BT_data, C, top_blob, broadcast_type_C, constantN, constantK, transA, output_transpose, constant_TILE_M, constant_TILE_N, constant_TILE_K, _nT, opt);
+        }
     }
     else
     {
