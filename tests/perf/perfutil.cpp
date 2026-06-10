@@ -11,7 +11,12 @@
 #include <float.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 #if NCNN_VULKAN
 #include "command.h"
@@ -24,6 +29,72 @@
 #define PERF_GPU_WARMUP_BATCH 100
 #define PERF_RUN_COUNT        20
 #define PERF_TARGET_MIN_MS    5.0
+
+int perf_env_int(const char* name, int default_value, int min_value)
+{
+    const char* s = getenv(name);
+    if (!s || !s[0])
+        return default_value;
+
+    int v = atoi(s);
+    return v < min_value ? min_value : v;
+}
+
+bool perf_has_env(const char* name)
+{
+    const char* s = getenv(name);
+    return s && s[0];
+}
+
+bool perf_match_env_int(const char* name, int value)
+{
+    const char* s = getenv(name);
+    if (!s || !s[0])
+        return true;
+
+    return atoi(s) == value;
+}
+
+bool perf_match_env_string(const char* name, const char* value)
+{
+    const char* s = getenv(name);
+    if (!s || !s[0])
+        return true;
+
+    return strcmp(s, value) == 0;
+}
+
+static void setup_perf_cpu_affinity()
+{
+    static bool initialized = false;
+    if (initialized)
+        return;
+    initialized = true;
+
+#if defined(__linux__)
+    const char* s = getenv("NCNN_PERF_CPU_AFFINITY");
+    if (!s || !s[0])
+        return;
+
+    int cpu = atoi(s);
+    if (cpu < 0)
+        return;
+    if (cpu >= CPU_SETSIZE)
+    {
+        fprintf(stderr, "NCNN_PERF_CPU_AFFINITY=%d exceeds CPU_SETSIZE=%d\n", cpu, CPU_SETSIZE);
+        return;
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu, &cpuset);
+
+    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
+    {
+        fprintf(stderr, "NCNN_PERF_CPU_AFFINITY=%d sched_setaffinity failed\n", cpu);
+    }
+#endif
+}
 
 // benchmark result for a single test case
 struct PerfResult
@@ -621,15 +692,21 @@ static int perf_layer_gpu(const char* layer_type, const ncnn::ParamDict& pd,
 
 static void print_perf_result(const char* tag, const PerfResult& result)
 {
+    double divisor = result.loop_count > 0 ? result.loop_count : 1;
+    double time_min = result.time_min / divisor;
+    double time_max = result.time_max / divisor;
+    double time_avg = result.time_avg / divisor;
+    double time_median = result.time_median / divisor;
+
     if (result.loop_count > 1)
     {
-        fprintf(stdout, "%-72s  min = %8.2f  max = %8.2f  avg = %8.2f  median = %8.2f  (x%d)\n",
-                tag, result.time_min, result.time_max, result.time_avg, result.time_median, result.loop_count);
+        fprintf(stdout, "%-72s  min = %8.4f  max = %8.4f  avg = %8.4f  median = %8.4f  (x%d)\n",
+                tag, time_min, time_max, time_avg, time_median, result.loop_count);
     }
     else
     {
-        fprintf(stdout, "%-72s  min = %8.2f  max = %8.2f  avg = %8.2f  median = %8.2f\n",
-                tag, result.time_min, result.time_max, result.time_avg, result.time_median);
+        fprintf(stdout, "%-72s  min = %8.4f  max = %8.4f  avg = %8.4f  median = %8.4f\n",
+                tag, time_min, time_max, time_avg, time_median);
     }
     fflush(stdout);
 }
@@ -733,7 +810,8 @@ static ncnn::Option make_perf_option(bool use_fp16_ps, bool use_fp16_arith, bool
 {
     ncnn::Option opt;
     opt.lightmode = true;
-    opt.num_threads = 1;
+    // Allow runtime override via env var; default 1.
+    opt.num_threads = perf_env_int("NCNN_PERF_THREADS", 1, 1);
     opt.use_packing_layout = true;
     opt.use_fp16_packed = use_fp16_ps;
     opt.use_fp16_storage = use_fp16_ps;
@@ -766,17 +844,27 @@ static const PrecisionConfig s_configs[] = {
 };
 static const int s_num_configs = sizeof(s_configs) / sizeof(s_configs[0]);
 
+static bool should_run_precision(const char* label)
+{
+    return perf_match_env_string("NCNN_PERF_DTYPE", label);
+}
+
 static void perf_layer_impl(const char* layer_type, const ncnn::ParamDict& pd,
                             const std::vector<ncnn::Mat>& weights,
                             const std::vector<ncnn::Mat>& inputs,
                             int top_blob_count,
                             const char* tag)
 {
+    setup_perf_cpu_affinity();
+
     // --- CPU ---
     // run fp32 first to calibrate inner_loops, then reuse for all precisions
     int cpu_inner_loops = 0;
     for (int i = 0; i < s_num_configs; i++)
     {
+        if (!should_run_precision(s_configs[i].label))
+            continue;
+
         ncnn::Option opt = make_perf_option(s_configs[i].fp16_ps, s_configs[i].fp16_arith, s_configs[i].bf16);
 
         PerfResult result;
@@ -815,6 +903,9 @@ static void perf_layer_impl(const char* layer_type, const ncnn::ParamDict& pd,
             int gpu_inner_loops = 0;
             for (int i = 0; i < s_num_configs; i++)
             {
+                if (!should_run_precision(s_configs[i].label))
+                    continue;
+
                 ncnn::Option opt = make_perf_option(s_configs[i].fp16_ps, s_configs[i].fp16_arith, s_configs[i].bf16);
 
                 PerfResult result;

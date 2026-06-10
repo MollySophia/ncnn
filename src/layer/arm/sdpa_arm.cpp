@@ -5,6 +5,7 @@
 
 #include "cpu.h"
 #include "layer_type.h"
+#include "sdpa_arm_flash.h"
 
 namespace ncnn {
 
@@ -197,7 +198,7 @@ int SDPA_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
     const size_t elemsize = query.elemsize;
     const int num_heads_per_group = num_heads / num_group;
 
-    // kv_cache==2: in-place append to preallocated buffer
+    // kv_cache==2: in-place append + flash decode (zero-copy from preallocated buffer)
     if (kv_cache == 2 && past_key.dims > 0)
     {
         const int key_capacity = (int)(past_key.cstep / embed_dim);
@@ -216,6 +217,70 @@ int SDPA_arm::forward(const std::vector<Mat>& bottom_blobs, std::vector<Mat>& to
             memcpy(pv + (size_t)past_seqlen * out_embed_dim * elemsize,
                    cur_value.channel(q).data, out_embed_dim * cur_seqlen * elemsize);
         }
+
+#if __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+        if (elemsize == 2 && opt.use_fp16_storage && !int8_scale_term)
+        {
+            // Direct call: this TU has fp16 (and may also have fp16fml).
+            // The static helper in sdpa_arm_flash.h returns -1 when prefill
+            // is requested but the TU doesn't have FP16FML - that case falls
+            // through to the Gemm path below.
+            int rc = flash_kv_cache2_fp16_path(top_blobs[0],
+                query, past_key, past_value, attn_mask, attn_mask_blob,
+                src_seqlen, dst_seqlen, embed_dim, out_embed_dim,
+                num_heads, num_heads_per_group, scale, opt);
+            if (rc == 0)
+            {
+                top_blobs[1] = make_persistent_kvcache_view_arm(past_key, dst_seqlen);
+                top_blobs[2] = make_persistent_kvcache_view_arm(past_value, dst_seqlen);
+                return 0;
+            }
+            if (rc == -100) return -100;
+            // rc == -1: cannot handle (e.g., prefill needs FHM), fall through.
+        }
+#elif NCNN_RUNTIME_CPU && NCNN_ARM82FP16FML && __aarch64__
+        if (elemsize == 2 && opt.use_fp16_storage && !int8_scale_term)
+        {
+            int rc = -1;
+            if (ncnn::cpu_support_arm_asimdfhm())
+            {
+                rc = flash_kv_cache2_fp16_path_asimdfhm(top_blobs[0],
+                    query, past_key, past_value, attn_mask, attn_mask_blob,
+                    src_seqlen, dst_seqlen, embed_dim, out_embed_dim,
+                    num_heads, num_heads_per_group, scale, opt);
+            }
+            else if (ncnn::cpu_support_arm_asimdhp())
+            {
+                rc = flash_kv_cache2_fp16_path_asimdhp(top_blobs[0],
+                    query, past_key, past_value, attn_mask, attn_mask_blob,
+                    src_seqlen, dst_seqlen, embed_dim, out_embed_dim,
+                    num_heads, num_heads_per_group, scale, opt);
+            }
+            if (rc == 0)
+            {
+                top_blobs[1] = make_persistent_kvcache_view_arm(past_key, dst_seqlen);
+                top_blobs[2] = make_persistent_kvcache_view_arm(past_value, dst_seqlen);
+                return 0;
+            }
+            if (rc == -100) return -100;
+        }
+#elif NCNN_RUNTIME_CPU && NCNN_ARM82 && __aarch64__
+        if (elemsize == 2 && opt.use_fp16_storage && !int8_scale_term && ncnn::cpu_support_arm_asimdhp())
+        {
+            int rc = flash_kv_cache2_fp16_path_asimdhp(top_blobs[0],
+                query, past_key, past_value, attn_mask, attn_mask_blob,
+                src_seqlen, dst_seqlen, embed_dim, out_embed_dim,
+                num_heads, num_heads_per_group, scale, opt);
+            if (rc == 0)
+            {
+                top_blobs[1] = make_persistent_kvcache_view_arm(past_key, dst_seqlen);
+                top_blobs[2] = make_persistent_kvcache_view_arm(past_value, dst_seqlen);
+                return 0;
+            }
+            if (rc == -100) return -100;
+        }
+#endif
+        // Prefill or fp32: copy dst_seqlen rows from buffer -> compact Mat, fall through to Gemm
     }
 
     Mat key;
